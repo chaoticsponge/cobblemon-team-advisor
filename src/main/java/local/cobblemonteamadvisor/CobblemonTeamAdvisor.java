@@ -58,6 +58,7 @@ public final class CobblemonTeamAdvisor {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
     private static boolean autoFightEnabled;
+    private static long lastAutoActionAt;
     private static boolean wasPcOpen;
 
     public CobblemonTeamAdvisor() {
@@ -71,6 +72,10 @@ public final class CobblemonTeamAdvisor {
             export(minecraft, (PCGUI) minecraft.screen);
         }
         wasPcOpen = pcOpen;
+
+        if (autoFightEnabled && minecraft.screen instanceof BattleGUI battleGUI) {
+            autoSelectBattleAction(battleGUI);
+        }
     }
 
     @SubscribeEvent
@@ -113,8 +118,7 @@ public final class CobblemonTeamAdvisor {
         }
 
         Minecraft minecraft = Minecraft.getInstance();
-        BattleSwitchPokemonSelection.SwitchTile bestTile = null;
-        int bestScore = Integer.MIN_VALUE;
+        BattleSwitchPokemonSelection.SwitchTile bestTile = bestSwitchTile(selection, opponent.getBattlePokemon());
         for (BattleSwitchPokemonSelection.SwitchTile tile : selection.getTiles()) {
             Pokemon pokemon = tile.getPokemon();
             if (pokemon == null || tile.isFainted()) {
@@ -122,10 +126,6 @@ public final class CobblemonTeamAdvisor {
             }
 
             int score = matchupScore(pokemon, tile.getShowdownPokemon(), opponent.getBattlePokemon());
-            if (score > bestScore) {
-                bestScore = score;
-                bestTile = tile;
-            }
             String text = signed(score);
             int color = score > 0 ? 0xFF5BFF73 : score < 0 ? 0xFFFF6B6B : 0xFFE8E8E8;
             int x = Math.round(tile.getX()) + 22 + minecraft.font.width(Integer.toString(pokemon.getLevel()));
@@ -140,22 +140,15 @@ public final class CobblemonTeamAdvisor {
 
     private static void renderMoveAdvisor(GuiGraphics graphics, BattleMoveSelection selection) {
         Minecraft minecraft = Minecraft.getInstance();
-        BattleMoveSelection.MoveTile bestTile = null;
-        double bestScore = 0.0D;
+        BattleMoveSelection.MoveTile bestTile = bestMoveTile(selection);
         for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
             if (!tile.getSelectable()) {
                 continue;
             }
 
-            double score = moveScore(tile);
-            if (score > bestScore) {
-                bestScore = score;
-                bestTile = tile;
-            }
-
             if (likelyKos(tile)) {
                 String text = "KO";
-                int x = Math.round(tile.getX()) + 72 - minecraft.font.width(text);
+                int x = Math.round(tile.getX()) + BattleMoveSelection.MOVE_WIDTH - minecraft.font.width(text) - 5;
                 int y = Math.round(tile.getY()) + 3;
                 graphics.drawString(minecraft.font, text, x, y, 0xFFFFE066, true);
             }
@@ -163,8 +156,7 @@ public final class CobblemonTeamAdvisor {
         if (bestTile != null) {
             int x = Math.round(bestTile.getX());
             int y = Math.round(bestTile.getY());
-            outline(graphics, x, y, 84, 30);
-            graphics.drawString(minecraft.font, "BEST", x + 3, y + 3, 0xFF5BFF73, true);
+            outline(graphics, x, y, BattleMoveSelection.MOVE_WIDTH, BattleMoveSelection.MOVE_HEIGHT);
         }
     }
 
@@ -192,8 +184,29 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static void outline(GuiGraphics graphics, int x, int y, int width, int height) {
-        graphics.renderOutline(x - 2, y - 2, width + 4, height + 4, 0xFF5BFF73);
-        graphics.renderOutline(x - 1, y - 1, width + 2, height + 2, 0xAA101010);
+        graphics.renderOutline(x, y, width, height, 0xFF5BFF73);
+    }
+
+    private static void autoSelectBattleAction(BattleGUI battleGUI) {
+        long now = System.currentTimeMillis();
+        if (now - lastAutoActionAt < 1200L) {
+            return;
+        }
+
+        if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
+            BattleMoveSelection.MoveTile tile = bestMoveTile(selection);
+            if (tile != null) {
+                tile.onClick();
+                lastAutoActionAt = now;
+            }
+        } else if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
+            BattleSwitchPokemonSelection.SwitchTile tile = bestSwitchTile(selection, currentOpponent(selection));
+            if (tile != null) {
+                selection.mousePrimaryClicked(tile.getX() + BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH / 2.0D,
+                        tile.getY() + BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT / 2.0D);
+                lastAutoActionAt = now;
+            }
+        }
     }
 
     private static void export(Minecraft minecraft, PCGUI screen) {
@@ -292,6 +305,39 @@ public final class CobblemonTeamAdvisor {
         return box.getName() == null ? "Box " + (boxIndex + 1) : box.getName().getString();
     }
 
+    private static ClientBattlePokemon currentOpponent(BattleSwitchPokemonSelection selection) {
+        ActiveClientBattlePokemon opponent = selection.getRequest().getActivePokemon().getAdjacentOpponents().stream()
+                .filter(ActiveClientBattlePokemon.class::isInstance)
+                .map(ActiveClientBattlePokemon.class::cast)
+                .filter(ActiveClientBattlePokemon::hasPokemon)
+                .findFirst()
+                .orElse(null);
+        return opponent == null ? null : opponent.getBattlePokemon();
+    }
+
+    private static BattleSwitchPokemonSelection.SwitchTile bestSwitchTile(BattleSwitchPokemonSelection selection,
+                                                                          ClientBattlePokemon opponent) {
+        if (opponent == null) {
+            return null;
+        }
+
+        BattleSwitchPokemonSelection.SwitchTile bestTile = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (BattleSwitchPokemonSelection.SwitchTile tile : selection.getTiles()) {
+            Pokemon pokemon = tile.getPokemon();
+            if (pokemon == null || tile.isFainted() || tile.isCurrentlyInBattle()) {
+                continue;
+            }
+
+            int score = matchupScore(pokemon, tile.getShowdownPokemon(), opponent);
+            if (score > bestScore) {
+                bestScore = score;
+                bestTile = tile;
+            }
+        }
+        return bestTile;
+    }
+
     private static int matchupScore(Pokemon mine, ShowdownPokemon mineBattle, ClientBattlePokemon opponent) {
         int score = offensiveScore(mine, mineBattle, opponent);
         score -= offensiveThreatScore(opponent, mine);
@@ -379,6 +425,23 @@ public final class CobblemonTeamAdvisor {
 
     private static boolean isDamaging(MoveTemplate move) {
         return move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D;
+    }
+
+    private static BattleMoveSelection.MoveTile bestMoveTile(BattleMoveSelection selection) {
+        BattleMoveSelection.MoveTile bestTile = null;
+        double bestScore = 0.0D;
+        for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
+            if (!tile.getSelectable()) {
+                continue;
+            }
+
+            double score = moveScore(tile);
+            if (score > bestScore) {
+                bestScore = score;
+                bestTile = tile;
+            }
+        }
+        return bestTile;
     }
 
     private static double moveScore(BattleMoveSelection.MoveTile tile) {
