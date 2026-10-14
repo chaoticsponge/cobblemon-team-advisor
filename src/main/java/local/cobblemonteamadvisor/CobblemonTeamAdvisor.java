@@ -21,6 +21,7 @@ import com.cobblemon.mod.common.pokemon.Pokemon;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
@@ -34,6 +35,8 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import org.slf4j.Logger;
 
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,6 +44,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -59,6 +63,7 @@ public final class CobblemonTeamAdvisor {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
+    private static final Map<String, List<String>> COBBLEVERSE_TRAINER_MOVES = cobbleverseTrainerMoves();
     private static boolean autoFightEnabled;
     private static long lastAutoActionAt;
     private static boolean wasPcOpen;
@@ -447,12 +452,25 @@ public final class CobblemonTeamAdvisor {
 
     private static List<MoveTemplate> opponentThreatMoves(ClientBattlePokemon pokemon) {
         List<MoveTemplate> moves = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
         List<String> knownMoves = pokemon.getProperties().getMoves();
         if (knownMoves != null) {
             for (String moveName : knownMoves) {
                 MoveTemplate move = damagingMove(moveName);
-                if (move != null) {
+                if (move != null && seen.add(move.getName())) {
                     moves.add(move);
+                }
+            }
+        }
+
+        if (moves.size() < 4) {
+            List<String> trainerMoves = COBBLEVERSE_TRAINER_MOVES.get(trainerMoveKey(pokemon));
+            if (trainerMoves != null) {
+                for (String moveName : trainerMoves) {
+                    MoveTemplate move = damagingMove(moveName);
+                    if (move != null && seen.add(move.getName())) {
+                        moves.add(move);
+                    }
                 }
             }
         }
@@ -460,12 +478,16 @@ public final class CobblemonTeamAdvisor {
         if (moves.size() < 4) {
             Set<String> aspects = pokemon.getProperties().getAspects();
             for (MoveTemplate move : pokemon.getSpecies().getForm(aspects).getMoves().getLevelUpMovesUpTo(pokemon.getLevel())) {
-                if (isDamaging(move)) {
+                if (isDamaging(move) && seen.add(move.getName())) {
                     moves.add(move);
                 }
             }
         }
         return moves;
+    }
+
+    private static String trainerMoveKey(ClientBattlePokemon pokemon) {
+        return normalizedId(pokemon.getSpecies().getName()) + ":" + pokemon.getLevel();
     }
 
     private static MoveTemplate damagingMove(String moveName) {
@@ -692,6 +714,10 @@ public final class CobblemonTeamAdvisor {
         return ability == null ? null : ability.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 
+    private static String normalizedId(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
+    }
+
     private static String signed(int score) {
         return (score >= 0 ? "+" : "") + score;
     }
@@ -748,6 +774,29 @@ public final class CobblemonTeamAdvisor {
         Map<String, Double> row = chart.computeIfAbsent(attack, key -> new HashMap<>());
         for (String defender : defenders) {
             row.put(defender, multiplier);
+        }
+    }
+
+    private static Map<String, List<String>> cobbleverseTrainerMoves() {
+        try (InputStream stream = CobblemonTeamAdvisor.class.getResourceAsStream("/cobbleverse-trainer-moves.json")) {
+            if (stream == null) {
+                return Map.of();
+            }
+
+            JsonObject root = GSON.fromJson(new InputStreamReader(stream, StandardCharsets.UTF_8), JsonObject.class);
+            JsonObject moves = root.getAsJsonObject("moves");
+            Map<String, List<String>> result = new HashMap<>();
+            for (Map.Entry<String, JsonElement> entry : moves.entrySet()) {
+                List<String> names = new ArrayList<>();
+                for (JsonElement move : entry.getValue().getAsJsonArray()) {
+                    names.add(move.getAsString());
+                }
+                result.put(entry.getKey(), List.copyOf(names));
+            }
+            return Map.copyOf(result);
+        } catch (Exception exception) {
+            LOGGER.warn("Could not load Cobbleverse trainer move snapshot", exception);
+            return Map.of();
         }
     }
 }
