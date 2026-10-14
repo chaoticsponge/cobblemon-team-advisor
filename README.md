@@ -18,14 +18,6 @@ The JSON file includes Cobblemon's serialized Pokemon data. The CSV file include
 
 Scores are a compact hint, not a simulator. They combine your best current offensive matchup with the opponent's likely offensive threat and simple ability counters.
 
-## Privacy
-
-This mod reads data already synchronized to the client. It does not add server code, send extra network requests, or upload exports anywhere.
-
-## CobblemonToolsAPI
-
-This mod does not currently depend on CobblemonToolsAPI. It uses Cobblemon client classes directly, so there is no CobblemonToolsAPI integration PR to submit.
-
 ## Build
 
 Use Java 21 and Gradle 8.8 or newer, then run:
