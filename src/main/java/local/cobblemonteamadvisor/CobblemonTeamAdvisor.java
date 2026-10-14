@@ -555,7 +555,7 @@ public final class CobblemonTeamAdvisor {
 
     private static BattleMoveSelection.MoveTile bestMoveTile(BattleMoveSelection selection) {
         BattleMoveSelection.MoveTile bestTile = null;
-        double bestScore = 0.0D;
+        double bestScore = Double.NEGATIVE_INFINITY;
         for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
             if (!tile.getSelectable()) {
                 continue;
