@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'local.cobblemonteamadvisor'
-version = '1.6.1'
+version = '1.7.0'
 
 base {
     archivesName = 'cobblemon-team-advisor'
@@ -21,4 +21,17 @@ neoForge {
 dependencies {
     compileOnly files('../mods/Cobblemon-neoforge-1.7.3+1.21.1.jar')
     compileOnly 'org.jetbrains.kotlin:kotlin-stdlib:2.0.21'
+}
+
+tasks.register('battlePolicyTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'local.cobblemonteamadvisor.BattleMatchupPolicyTest'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.named('check') {
+    dependsOn battlePolicyTest
 }

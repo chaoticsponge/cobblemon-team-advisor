@@ -50,7 +50,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 
 @Mod(value = CobblemonTeamAdvisor.MOD_ID, dist = Dist.CLIENT)
@@ -60,8 +59,6 @@ public final class CobblemonTeamAdvisor {
     private static final int AUTO_TOGGLE_WIDTH = 58;
     private static final int AUTO_TOGGLE_HEIGHT = 14;
     private static final int AUTO_TOGGLE_MARGIN = 6;
-    private static final int SWITCH_OUT_THRESHOLD = -2;
-    private static final int SWITCH_GAIN_THRESHOLD = 2;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
@@ -367,7 +364,7 @@ public final class CobblemonTeamAdvisor {
     private static boolean shouldAutoSwitch(BattleGUI battleGUI, BattleMoveSelection selection) {
         ClientBattlePokemon opponent = currentOpponent(selection);
         Pokemon active = activePokemon(selection);
-        if (opponent == null || active == null) {
+        if (opponent == null || active == null || selection.getMoveSet().getTrapped()) {
             return false;
         }
 
@@ -379,7 +376,7 @@ public final class CobblemonTeamAdvisor {
 
         int currentScore = matchupScore(active, null, opponent);
         int switchScore = matchupScore(bestSwitch.getPokemon(), bestSwitch.getShowdownPokemon(), opponent);
-        return currentScore <= SWITCH_OUT_THRESHOLD && switchScore - currentScore >= SWITCH_GAIN_THRESHOLD;
+        return BattleMatchupPolicy.shouldSwitch(currentScore, switchScore);
     }
 
     private static Pokemon activePokemon(BattleMoveSelection selection) {
@@ -418,7 +415,7 @@ public final class CobblemonTeamAdvisor {
     private static int matchupScore(Pokemon mine, ShowdownPokemon mineBattle, ClientBattlePokemon opponent) {
         int score = offensiveScore(mine, mineBattle, opponent);
         score -= offensiveThreatScore(opponent, mine);
-        return Math.max(-9, Math.min(9, score));
+        return score;
     }
 
     private static int offensiveScore(Pokemon attacker, ShowdownPokemon battleData, ClientBattlePokemon defender) {
@@ -429,7 +426,8 @@ public final class CobblemonTeamAdvisor {
                 continue;
             }
             hasDamagingMove = true;
-            best = Math.max(best, moveMultiplier(move.getTemplate().getEffectiveElementalType(attacker), defenderTypes(defender)));
+            best = Math.max(best, effectiveMoveMultiplier(move.getTemplate().getEffectiveElementalType(attacker), defenderTypes(defender),
+                    normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
         }
 
         if (!hasDamagingMove && battleData != null) {
@@ -437,39 +435,37 @@ public final class CobblemonTeamAdvisor {
                 MoveTemplate move = Moves.getByName(moveName);
                 if (move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D) {
                     hasDamagingMove = true;
-                    best = Math.max(best, moveMultiplier(move.getElementalType(), defenderTypes(defender)));
+                    best = Math.max(best, effectiveMoveMultiplier(move.getElementalType(), defenderTypes(defender),
+                            normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
                 }
             }
         }
 
         if (!hasDamagingMove) {
-            best = bestTypeMultiplier(types(attacker), defenderTypes(defender));
+            for (ElementalType type : types(attacker)) {
+                best = Math.max(best, effectiveMoveMultiplier(type, defenderTypes(defender),
+                        normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
+            }
         }
-
-        int score = multiplierScore(best, true);
-        String defenderAbility = normalizedAbility(defender.getProperties().getAbility());
-        if (defenderAbilityCounters(defenderAbility, attackTypes(attacker), defenderTypes(defender))) {
-            score--;
-        }
-        return score;
+        return BattleMatchupPolicy.offensiveScore(best);
     }
 
     private static int offensiveThreatScore(ClientBattlePokemon attacker, Pokemon defender) {
         List<ElementalType> defenderTypes = types(defender);
-        List<ElementalType> attackTypes = new ArrayList<>();
-        double best = bestTypeMultiplier(defenderTypes(attacker), defenderTypes);
-
-        for (MoveTemplate move : opponentThreatMoves(attacker)) {
-            ElementalType type = move.getElementalType();
-            attackTypes.add(type);
-            best = Math.max(best, moveMultiplier(type, defenderTypes));
+        String defenderAbility = normalizedAbility(defender.getAbility().getName());
+        String attackerAbility = normalizedAbility(attacker.getProperties().getAbility());
+        List<MoveTemplate> moves = opponentThreatMoves(attacker);
+        double best = 0.0D;
+        // Apply abilities to each move before taking the worst threat: coverage can bypass an immunity.
+        for (MoveTemplate move : moves) {
+            best = Math.max(best, effectiveMoveMultiplier(move.getElementalType(), defenderTypes, defenderAbility, attackerAbility));
         }
-
-        int score = multiplierScore(best, false);
-        if (defenderAbilityCounters(normalizedAbility(defender.getAbility().getName()), attackTypes, defenderTypes)) {
-            score--;
+        if (moves.isEmpty()) {
+            for (ElementalType type : defenderTypes(attacker)) {
+                best = Math.max(best, effectiveMoveMultiplier(type, defenderTypes, defenderAbility, attackerAbility));
+            }
         }
-        return score;
+        return BattleMatchupPolicy.threatScore(best);
     }
 
     private static List<MoveTemplate> opponentThreatMoves(ClientBattlePokemon pokemon) {
@@ -630,7 +626,8 @@ public final class CobblemonTeamAdvisor {
         double attack = Math.max(1, attacker.getStat(special ? Stats.SPECIAL_ATTACK : Stats.ATTACK));
         double defence = Math.max(1, estimatedStat(defender, special ? Stats.SPECIAL_DEFENCE : Stats.DEFENCE));
         double stab = types(attacker).stream().anyMatch(type -> type == attackType || type.showdownId().equals(attackType.showdownId())) ? 1.5D : 1.0D;
-        double type = moveMultiplier(attackType, defenderTypes(defender));
+        double type = effectiveMoveMultiplier(attackType, defenderTypes(defender),
+                normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName()));
         double base = (((2.0D * level / 5.0D + 2.0D) * power * attack / defence) / 50.0D) + 2.0D;
         return base * stab * type * 0.925D;
     }
@@ -674,16 +671,6 @@ public final class CobblemonTeamAdvisor {
         return value == null ? 1 : value;
     }
 
-    private static List<ElementalType> attackTypes(Pokemon pokemon) {
-        List<ElementalType> types = new ArrayList<>();
-        for (Move move : pokemon.getMoveSet()) {
-            if (move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D) {
-                types.add(move.getTemplate().getEffectiveElementalType(pokemon));
-            }
-        }
-        return types.isEmpty() ? types(pokemon) : types;
-    }
-
     private static List<ElementalType> types(Pokemon pokemon) {
         return iterableToList(pokemon.getTypes());
     }
@@ -702,12 +689,10 @@ public final class CobblemonTeamAdvisor {
         return types;
     }
 
-    private static double bestTypeMultiplier(Collection<ElementalType> attackTypes, Collection<ElementalType> defenderTypes) {
-        double best = 0.0D;
-        for (ElementalType attackType : attackTypes) {
-            best = Math.max(best, moveMultiplier(attackType, defenderTypes));
-        }
-        return best;
+    private static double effectiveMoveMultiplier(ElementalType attackType, Collection<ElementalType> defenderTypes,
+                                                  String defenderAbility, String attackerAbility) {
+        return BattleMatchupPolicy.effectiveMultiplier(moveMultiplier(attackType, defenderTypes),
+                attackType.showdownId(), defenderAbility, attackerAbility);
     }
 
     private static double moveMultiplier(ElementalType attackType, Collection<ElementalType> defenderTypes) {
@@ -718,50 +703,6 @@ public final class CobblemonTeamAdvisor {
                     .getOrDefault(defenderType.showdownId(), 1.0D);
         }
         return multiplier;
-    }
-
-    private static int multiplierScore(double multiplier, boolean attacking) {
-        if (multiplier >= 4.0D) {
-            return attacking ? 4 : 2;
-        }
-        if (multiplier >= 2.0D) {
-            return attacking ? 2 : 1;
-        }
-        if (multiplier == 0.0D) {
-            return attacking ? -2 : -1;
-        }
-        if (multiplier <= 0.25D) {
-            return attacking ? -2 : -1;
-        }
-        if (multiplier < 1.0D) {
-            return attacking ? -1 : 0;
-        }
-        return 0;
-    }
-
-    private static boolean defenderAbilityCounters(String ability, Collection<ElementalType> attackTypes,
-                                                   Collection<ElementalType> defenderTypes) {
-        if (ability == null) {
-            return false;
-        }
-
-        for (ElementalType attackType : attackTypes) {
-            String type = attackType.showdownId();
-            if (("levitate".equals(ability) && "ground".equals(type))
-                    || ("flashfire".equals(ability) && "fire".equals(type))
-                    || (("waterabsorb".equals(ability) || "stormdrain".equals(ability) || "dryskin".equals(ability)) && "water".equals(type))
-                    || (("voltabsorb".equals(ability) || "lightningrod".equals(ability) || "motordrive".equals(ability)) && "electric".equals(type))
-                    || ("sapsipper".equals(ability) && "grass".equals(type))
-                    || ("eartheater".equals(ability) && "ground".equals(type))
-                    || ("wellbakedbody".equals(ability) && "fire".equals(type))) {
-                return true;
-            }
-        }
-
-        return "thickfat".equals(ability) && attackTypes.stream()
-                .filter(Objects::nonNull)
-                .map(ElementalType::showdownId)
-                .anyMatch(type -> "fire".equals(type) || "ice".equals(type));
     }
 
     private static String normalizedAbility(String ability) {
