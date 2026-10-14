@@ -12,8 +12,10 @@ import com.cobblemon.mod.common.battles.Targetable;
 import com.cobblemon.mod.common.client.battle.ActiveClientBattlePokemon;
 import com.cobblemon.mod.common.client.battle.ClientBattlePokemon;
 import com.cobblemon.mod.common.client.gui.battle.BattleGUI;
+import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleGeneralActionSelection;
 import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleMoveSelection;
 import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleSwitchPokemonSelection;
+import com.cobblemon.mod.common.client.gui.battle.widgets.BattleOptionTile;
 import com.cobblemon.mod.common.client.gui.pc.PCGUI;
 import com.cobblemon.mod.common.client.storage.ClientBox;
 import com.cobblemon.mod.common.client.storage.ClientPC;
@@ -201,7 +203,7 @@ public final class CobblemonTeamAdvisor {
         }
 
         if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
-            if (shouldAutoSwitch(battleGUI, selection)) {
+            if (openAutoSwitchIfNeeded(battleGUI, selection)) {
                 lastAutoActionAt = now;
                 return;
             }
@@ -218,7 +220,22 @@ public final class CobblemonTeamAdvisor {
                         tile.getY() + BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT / 2.0D);
                 lastAutoActionAt = now;
             }
+        } else if (battleGUI.getCurrentActionSelection() instanceof BattleGeneralActionSelection selection) {
+            BattleMoveSelection moveSelection = new BattleMoveSelection(battleGUI, selection.getRequest());
+            String action = shouldAutoSwitch(battleGUI, moveSelection) ? "switch" : "fight";
+            if (clickActionTile(selection, action) || (!"fight".equals(action) && clickActionTile(selection, "fight"))) {
+                lastAutoActionAt = now;
+            }
         }
+    }
+
+    private static boolean clickActionTile(BattleGeneralActionSelection selection, String action) {
+        for (BattleOptionTile tile : selection.getTiles()) {
+            if (normalizedId(tile.getText().getString()).contains(action)) {
+                return tile.mousePrimaryClicked(tile.getX() + 45.0D, tile.getY() + 13.0D);
+            }
+        }
+        return false;
     }
 
     private static void export(Minecraft minecraft, PCGUI screen) {
@@ -337,6 +354,15 @@ public final class CobblemonTeamAdvisor {
         return opponent == null ? null : opponent.getBattlePokemon();
     }
 
+    private static boolean openAutoSwitchIfNeeded(BattleGUI battleGUI, BattleMoveSelection selection) {
+        if (!shouldAutoSwitch(battleGUI, selection)) {
+            return false;
+        }
+
+        battleGUI.changeActionSelection(new BattleSwitchPokemonSelection(battleGUI, selection.getRequest()));
+        return true;
+    }
+
     private static boolean shouldAutoSwitch(BattleGUI battleGUI, BattleMoveSelection selection) {
         ClientBattlePokemon opponent = currentOpponent(selection);
         Pokemon active = activePokemon(selection);
@@ -352,12 +378,7 @@ public final class CobblemonTeamAdvisor {
 
         int currentScore = matchupScore(active, null, opponent);
         int switchScore = matchupScore(bestSwitch.getPokemon(), bestSwitch.getShowdownPokemon(), opponent);
-        if (currentScore > SWITCH_OUT_THRESHOLD || switchScore - currentScore < SWITCH_GAIN_THRESHOLD) {
-            return false;
-        }
-
-        battleGUI.changeActionSelection(switchSelection);
-        return true;
+        return currentScore <= SWITCH_OUT_THRESHOLD && switchScore - currentScore >= SWITCH_GAIN_THRESHOLD;
     }
 
     private static Pokemon activePokemon(BattleMoveSelection selection) {
