@@ -51,9 +51,13 @@ import java.util.Set;
 @EventBusSubscriber(modid = CobblemonTeamAdvisor.MOD_ID, value = Dist.CLIENT)
 public final class CobblemonTeamAdvisor {
     public static final String MOD_ID = "cobblemonteamadvisor";
+    private static final int AUTO_TOGGLE_WIDTH = 58;
+    private static final int AUTO_TOGGLE_HEIGHT = 14;
+    private static final int AUTO_TOGGLE_MARGIN = 6;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
+    private static boolean autoFightEnabled;
     private static boolean wasPcOpen;
 
     public CobblemonTeamAdvisor() {
@@ -78,8 +82,23 @@ public final class CobblemonTeamAdvisor {
         if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
             renderSwitchScores(event.getGuiGraphics(), selection);
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
-            renderMoveKoLabels(event.getGuiGraphics(), selection);
+            renderMoveAdvisor(event.getGuiGraphics(), selection);
         }
+        renderAutoToggle(event.getGuiGraphics());
+    }
+
+    @SubscribeEvent
+    public static void onMousePressed(ScreenEvent.MouseButtonPressed.Pre event) {
+        if (!(event.getScreen() instanceof BattleGUI) || event.getButton() != 0 || !isAutoToggleHovered(event.getMouseX(), event.getMouseY())) {
+            return;
+        }
+
+        autoFightEnabled = !autoFightEnabled;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null) {
+            minecraft.player.displayClientMessage(Component.literal("Auto fight " + (autoFightEnabled ? "enabled" : "disabled")), true);
+        }
+        event.setCanceled(true);
     }
 
     private static void renderSwitchScores(GuiGraphics graphics, BattleSwitchPokemonSelection selection) {
@@ -94,6 +113,8 @@ public final class CobblemonTeamAdvisor {
         }
 
         Minecraft minecraft = Minecraft.getInstance();
+        BattleSwitchPokemonSelection.SwitchTile bestTile = null;
+        int bestScore = Integer.MIN_VALUE;
         for (BattleSwitchPokemonSelection.SwitchTile tile : selection.getTiles()) {
             Pokemon pokemon = tile.getPokemon();
             if (pokemon == null || tile.isFainted()) {
@@ -101,26 +122,78 @@ public final class CobblemonTeamAdvisor {
             }
 
             int score = matchupScore(pokemon, tile.getShowdownPokemon(), opponent.getBattlePokemon());
+            if (score > bestScore) {
+                bestScore = score;
+                bestTile = tile;
+            }
             String text = signed(score);
             int color = score > 0 ? 0xFF5BFF73 : score < 0 ? 0xFFFF6B6B : 0xFFE8E8E8;
             int x = Math.round(tile.getX()) + 22 + minecraft.font.width(Integer.toString(pokemon.getLevel()));
             int y = Math.round(tile.getY()) + 4;
             graphics.drawString(minecraft.font, text, x, y, color, true);
         }
+        if (bestTile != null) {
+            outline(graphics, Math.round(bestTile.getX()), Math.round(bestTile.getY()),
+                    BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH, BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT);
+        }
     }
 
-    private static void renderMoveKoLabels(GuiGraphics graphics, BattleMoveSelection selection) {
+    private static void renderMoveAdvisor(GuiGraphics graphics, BattleMoveSelection selection) {
         Minecraft minecraft = Minecraft.getInstance();
+        BattleMoveSelection.MoveTile bestTile = null;
+        double bestScore = 0.0D;
         for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
-            if (!tile.getSelectable() || !likelyKos(tile)) {
+            if (!tile.getSelectable()) {
                 continue;
             }
 
-            String text = "KO";
-            int x = Math.round(tile.getX()) + 72 - minecraft.font.width(text);
-            int y = Math.round(tile.getY()) + 3;
-            graphics.drawString(minecraft.font, text, x, y, 0xFFFFE066, true);
+            double score = moveScore(tile);
+            if (score > bestScore) {
+                bestScore = score;
+                bestTile = tile;
+            }
+
+            if (likelyKos(tile)) {
+                String text = "KO";
+                int x = Math.round(tile.getX()) + 72 - minecraft.font.width(text);
+                int y = Math.round(tile.getY()) + 3;
+                graphics.drawString(minecraft.font, text, x, y, 0xFFFFE066, true);
+            }
         }
+        if (bestTile != null) {
+            int x = Math.round(bestTile.getX());
+            int y = Math.round(bestTile.getY());
+            outline(graphics, x, y, 84, 30);
+            graphics.drawString(minecraft.font, "BEST", x + 3, y + 3, 0xFF5BFF73, true);
+        }
+    }
+
+    private static void renderAutoToggle(GuiGraphics graphics) {
+        Minecraft minecraft = Minecraft.getInstance();
+        int x = autoToggleX();
+        int y = AUTO_TOGGLE_MARGIN;
+        int background = autoFightEnabled ? 0xCC1F6F3A : 0xCC292929;
+        int border = autoFightEnabled ? 0xFF5BFF73 : 0xFFE8E8E8;
+        String text = autoFightEnabled ? "AUTO ON" : "AUTO OFF";
+
+        graphics.fill(x, y, x + AUTO_TOGGLE_WIDTH, y + AUTO_TOGGLE_HEIGHT, background);
+        graphics.renderOutline(x, y, AUTO_TOGGLE_WIDTH, AUTO_TOGGLE_HEIGHT, border);
+        graphics.drawString(minecraft.font, text, x + 5, y + 3, 0xFFFFFFFF, true);
+    }
+
+    private static boolean isAutoToggleHovered(double mouseX, double mouseY) {
+        int x = autoToggleX();
+        int y = AUTO_TOGGLE_MARGIN;
+        return mouseX >= x && mouseX <= x + AUTO_TOGGLE_WIDTH && mouseY >= y && mouseY <= y + AUTO_TOGGLE_HEIGHT;
+    }
+
+    private static int autoToggleX() {
+        return Minecraft.getInstance().getWindow().getGuiScaledWidth() - AUTO_TOGGLE_WIDTH - AUTO_TOGGLE_MARGIN;
+    }
+
+    private static void outline(GuiGraphics graphics, int x, int y, int width, int height) {
+        graphics.renderOutline(x - 2, y - 2, width + 4, height + 4, 0xFF5BFF73);
+        graphics.renderOutline(x - 1, y - 1, width + 2, height + 2, 0xAA101010);
     }
 
     private static void export(Minecraft minecraft, PCGUI screen) {
@@ -306,6 +379,23 @@ public final class CobblemonTeamAdvisor {
 
     private static boolean isDamaging(MoveTemplate move) {
         return move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D;
+    }
+
+    private static double moveScore(BattleMoveSelection.MoveTile tile) {
+        Pokemon attacker = tile.getPokemon();
+        MoveTemplate move = tile.getMoveTemplate();
+        if (attacker == null || !isDamaging(move)) {
+            return 0.0D;
+        }
+
+        ActiveClientBattlePokemon target = target(tile);
+        if (target == null || !target.hasPokemon()) {
+            return 0.0D;
+        }
+
+        ClientBattlePokemon defender = target.getBattlePokemon();
+        double damageRatio = estimatedDamage(attacker, defender, move, tile.getElementalType()) / estimatedMaxHp(defender);
+        return likelyKos(tile) ? damageRatio + 2.0D : damageRatio;
     }
 
     private static boolean likelyKos(BattleMoveSelection.MoveTile tile) {
