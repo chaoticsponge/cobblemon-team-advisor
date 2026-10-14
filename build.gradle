@@ -1,0 +1,24 @@
+plugins {
+    id 'java'
+    id 'net.neoforged.moddev' version '2.0.107'
+}
+
+group = 'local.cobblemonteamadvisor'
+version = '1.0.0'
+
+base {
+    archivesName = 'cobblemon-team-advisor'
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+neoForge {
+    version = '21.1.248'
+}
+
+dependencies {
+    compileOnly files('../mods/Cobblemon-neoforge-1.7.3+1.21.1.jar')
+    compileOnly 'org.jetbrains.kotlin:kotlin-stdlib:2.0.21'
+}
