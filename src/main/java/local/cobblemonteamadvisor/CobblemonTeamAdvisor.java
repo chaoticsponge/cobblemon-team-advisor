@@ -66,6 +66,7 @@ public final class CobblemonTeamAdvisor {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
     private static final Map<String, List<String>> COBBLEVERSE_TRAINER_MOVES = cobbleverseTrainerMoves();
+    private static final Map<String, Map<String, List<String>>> COBBLEVERSE_TRAINER_MOVES_BY_NAME = cobbleverseTrainerMovesByName();
     private static boolean autoFightEnabled;
     private static long lastAutoActionAt;
     private static boolean wasPcOpen;
@@ -485,6 +486,15 @@ public final class CobblemonTeamAdvisor {
         }
 
         if (moves.size() < 4) {
+            for (String moveName : trainerSpecificMoves(pokemon)) {
+                MoveTemplate move = damagingMove(moveName);
+                if (move != null && seen.add(move.getName())) {
+                    moves.add(move);
+                }
+            }
+        }
+
+        if (moves.size() < 4) {
             List<String> trainerMoves = COBBLEVERSE_TRAINER_MOVES.get(trainerMoveKey(pokemon));
             if (trainerMoves != null) {
                 for (String moveName : trainerMoves) {
@@ -509,6 +519,29 @@ public final class CobblemonTeamAdvisor {
 
     private static String trainerMoveKey(ClientBattlePokemon pokemon) {
         return normalizedId(pokemon.getSpecies().getName()) + ":" + pokemon.getLevel();
+    }
+
+    private static List<String> trainerSpecificMoves(ClientBattlePokemon pokemon) {
+        if (pokemon.getActor() == null || pokemon.getActor().getDisplayName() == null) {
+            return List.of();
+        }
+
+        String actorName = normalizedId(pokemon.getActor().getDisplayName().getString());
+        String memberKey = trainerMoveKey(pokemon);
+        Map<String, List<String>> exact = COBBLEVERSE_TRAINER_MOVES_BY_NAME.get(actorName);
+        if (exact != null && exact.containsKey(memberKey)) {
+            return exact.get(memberKey);
+        }
+
+        for (Map.Entry<String, Map<String, List<String>>> entry : COBBLEVERSE_TRAINER_MOVES_BY_NAME.entrySet()) {
+            if (actorName.contains(entry.getKey())) {
+                List<String> moves = entry.getValue().get(memberKey);
+                if (moves != null) {
+                    return moves;
+                }
+            }
+        }
+        return List.of();
     }
 
     private static MoveTemplate damagingMove(String moveName) {
@@ -799,25 +832,55 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static Map<String, List<String>> cobbleverseTrainerMoves() {
-        try (InputStream stream = CobblemonTeamAdvisor.class.getResourceAsStream("/cobbleverse-trainer-moves.json")) {
-            if (stream == null) {
-                return Map.of();
-            }
-
-            JsonObject root = GSON.fromJson(new InputStreamReader(stream, StandardCharsets.UTF_8), JsonObject.class);
-            JsonObject moves = root.getAsJsonObject("moves");
-            Map<String, List<String>> result = new HashMap<>();
-            for (Map.Entry<String, JsonElement> entry : moves.entrySet()) {
-                List<String> names = new ArrayList<>();
-                for (JsonElement move : entry.getValue().getAsJsonArray()) {
-                    names.add(move.getAsString());
-                }
-                result.put(entry.getKey(), List.copyOf(names));
-            }
-            return Map.copyOf(result);
-        } catch (Exception exception) {
-            LOGGER.warn("Could not load Cobbleverse trainer move snapshot", exception);
+        JsonObject root = cobbleverseTrainerMoveData();
+        if (root == null) {
             return Map.of();
         }
+
+        JsonObject moves = root.getAsJsonObject("moves");
+        Map<String, List<String>> result = new HashMap<>();
+        for (Map.Entry<String, JsonElement> entry : moves.entrySet()) {
+            result.put(entry.getKey(), stringList(entry.getValue().getAsJsonArray()));
+        }
+        return Map.copyOf(result);
+    }
+
+    private static Map<String, Map<String, List<String>>> cobbleverseTrainerMovesByName() {
+        JsonObject root = cobbleverseTrainerMoveData();
+        if (root == null || !root.has("trainerMovesByName")) {
+            return Map.of();
+        }
+
+        JsonObject trainers = root.getAsJsonObject("trainerMovesByName");
+        Map<String, Map<String, List<String>>> result = new HashMap<>();
+        for (Map.Entry<String, JsonElement> trainer : trainers.entrySet()) {
+            Map<String, List<String>> members = new HashMap<>();
+            for (Map.Entry<String, JsonElement> member : trainer.getValue().getAsJsonObject().entrySet()) {
+                members.put(member.getKey(), stringList(member.getValue().getAsJsonArray()));
+            }
+            result.put(trainer.getKey(), Map.copyOf(members));
+        }
+        return Map.copyOf(result);
+    }
+
+    private static JsonObject cobbleverseTrainerMoveData() {
+        try (InputStream stream = CobblemonTeamAdvisor.class.getResourceAsStream("/cobbleverse-trainer-moves.json")) {
+            if (stream == null) {
+                return null;
+            }
+
+            return GSON.fromJson(new InputStreamReader(stream, StandardCharsets.UTF_8), JsonObject.class);
+        } catch (Exception exception) {
+            LOGGER.warn("Could not load Cobbleverse trainer move snapshot", exception);
+            return null;
+        }
+    }
+
+    private static List<String> stringList(JsonArray array) {
+        List<String> values = new ArrayList<>();
+        for (JsonElement element : array) {
+            values.add(element.getAsString());
+        }
+        return List.copyOf(values);
     }
 }
