@@ -16,6 +16,7 @@ The JSON file includes Cobblemon's serialized Pokemon data. The CSV file include
 - Labels moves with `KO` when the current move is estimated to knock out the selected target.
 - Shows a battle-only `AUTO OFF` / `AUTO ON` toggle in the top-right corner. It defaults off.
 - When `AUTO ON`, automatically selects the highest-scored move or best available switch on the current battle screen.
+- When `AUTO ON`, opens the switch screen if the active Pokemon scores `-2` or worse and the best bench Pokemon is at least `+2` better.
 - Assumes worst-case known enemy level-up damaging moves until the opponent reveals more exact moves.
 - Ignores TM, tutor, egg, and other inconsistent move sources for enemy assumptions.
 
@@ -29,4 +30,4 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.2.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.3.0.jar`. Copy it into the profile's `mods` directory and restart the game.

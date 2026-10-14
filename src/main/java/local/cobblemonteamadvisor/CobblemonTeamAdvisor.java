@@ -54,6 +54,8 @@ public final class CobblemonTeamAdvisor {
     private static final int AUTO_TOGGLE_WIDTH = 58;
     private static final int AUTO_TOGGLE_HEIGHT = 14;
     private static final int AUTO_TOGGLE_MARGIN = 6;
+    private static final int SWITCH_OUT_THRESHOLD = -2;
+    private static final int SWITCH_GAIN_THRESHOLD = 2;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Map<String, Map<String, Double>> TYPE_EFFECTIVENESS = typeEffectiveness();
@@ -194,6 +196,11 @@ public final class CobblemonTeamAdvisor {
         }
 
         if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
+            if (shouldAutoSwitch(battleGUI, selection)) {
+                lastAutoActionAt = now;
+                return;
+            }
+
             BattleMoveSelection.MoveTile tile = bestMoveTile(selection);
             if (tile != null) {
                 tile.onClick();
@@ -313,6 +320,49 @@ public final class CobblemonTeamAdvisor {
                 .findFirst()
                 .orElse(null);
         return opponent == null ? null : opponent.getBattlePokemon();
+    }
+
+    private static ClientBattlePokemon currentOpponent(BattleMoveSelection selection) {
+        ActiveClientBattlePokemon opponent = selection.getRequest().getActivePokemon().getAdjacentOpponents().stream()
+                .filter(ActiveClientBattlePokemon.class::isInstance)
+                .map(ActiveClientBattlePokemon.class::cast)
+                .filter(ActiveClientBattlePokemon::hasPokemon)
+                .findFirst()
+                .orElse(null);
+        return opponent == null ? null : opponent.getBattlePokemon();
+    }
+
+    private static boolean shouldAutoSwitch(BattleGUI battleGUI, BattleMoveSelection selection) {
+        ClientBattlePokemon opponent = currentOpponent(selection);
+        Pokemon active = activePokemon(selection);
+        if (opponent == null || active == null) {
+            return false;
+        }
+
+        BattleSwitchPokemonSelection switchSelection = new BattleSwitchPokemonSelection(battleGUI, selection.getRequest());
+        BattleSwitchPokemonSelection.SwitchTile bestSwitch = bestSwitchTile(switchSelection, opponent);
+        if (bestSwitch == null) {
+            return false;
+        }
+
+        int currentScore = matchupScore(active, null, opponent);
+        int switchScore = matchupScore(bestSwitch.getPokemon(), bestSwitch.getShowdownPokemon(), opponent);
+        if (currentScore > SWITCH_OUT_THRESHOLD || switchScore - currentScore < SWITCH_GAIN_THRESHOLD) {
+            return false;
+        }
+
+        battleGUI.changeActionSelection(switchSelection);
+        return true;
+    }
+
+    private static Pokemon activePokemon(BattleMoveSelection selection) {
+        for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
+            Pokemon pokemon = tile.getPokemon();
+            if (pokemon != null) {
+                return pokemon;
+            }
+        }
+        return null;
     }
 
     private static BattleSwitchPokemonSelection.SwitchTile bestSwitchTile(BattleSwitchPokemonSelection selection,
