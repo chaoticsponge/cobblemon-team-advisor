@@ -1,11 +1,6 @@
 package local.cobblemonteamadvisor;
 
-import com.cobblemon.mod.common.api.moves.Move;
 import com.cobblemon.mod.common.api.moves.MoveTemplate;
-import com.cobblemon.mod.common.api.moves.Moves;
-import com.cobblemon.mod.common.api.moves.categories.DamageCategories;
-import com.cobblemon.mod.common.api.pokemon.stats.Stat;
-import com.cobblemon.mod.common.api.pokemon.stats.Stats;
 import com.cobblemon.mod.common.api.types.ElementalType;
 import com.cobblemon.mod.common.battles.ShowdownPokemon;
 import com.cobblemon.mod.common.battles.Targetable;
@@ -46,7 +41,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -73,6 +67,7 @@ public final class CobblemonTeamAdvisor {
 
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event) {
+        BattleAdvisor.syncBattle();
         Minecraft minecraft = Minecraft.getInstance();
         boolean pcOpen = minecraft.screen instanceof PCGUI;
         if (pcOpen && !wasPcOpen) {
@@ -95,6 +90,14 @@ public final class CobblemonTeamAdvisor {
             renderSwitchScores(event.getGuiGraphics(), selection);
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
             renderMoveAdvisor(event.getGuiGraphics(), selection);
+        }
+        BattleMoveSelection moves = battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection ? selection
+                : battleGUI.getCurrentActionSelection() instanceof BattleGeneralActionSelection selection
+                ? new BattleMoveSelection(battleGUI, selection.getRequest()) : null;
+        if (moves != null) {
+            BattleSwitchPokemonSelection switches = new BattleSwitchPokemonSelection(battleGUI, moves.getRequest());
+            BattleSwitchPokemonSelection.SwitchTile best = bestSwitchTile(switches, currentOpponent(moves));
+            BattleAdvisor.renderHint(event.getGuiGraphics(), moves, best);
         }
         renderAutoToggle(event.getGuiGraphics());
     }
@@ -142,6 +145,7 @@ public final class CobblemonTeamAdvisor {
         if (bestTile != null) {
             outline(graphics, Math.round(bestTile.getX()), Math.round(bestTile.getY()),
                     BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH, BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT);
+            BattleAdvisor.renderSwitchHint(graphics, bestTile, opponent.getBattlePokemon());
         }
     }
 
@@ -374,12 +378,11 @@ public final class CobblemonTeamAdvisor {
             return false;
         }
 
-        int currentScore = matchupScore(active, null, opponent);
-        int switchScore = matchupScore(bestSwitch.getPokemon(), bestSwitch.getShowdownPokemon(), opponent);
-        return BattleMatchupPolicy.shouldSwitch(currentScore, switchScore);
+        BattleSwitchPokemonSelection.SwitchTile recommended = bestSwitch;
+        return BattleAdvisor.shouldSwitch(selection, recommended.getPokemon(), recommended.getShowdownPokemon(), opponent);
     }
 
-    private static Pokemon activePokemon(BattleMoveSelection selection) {
+    static Pokemon activePokemon(BattleMoveSelection selection) {
         for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
             Pokemon pokemon = tile.getPokemon();
             if (pokemon != null) {
@@ -413,104 +416,22 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static int matchupScore(Pokemon mine, ShowdownPokemon mineBattle, ClientBattlePokemon opponent) {
-        int score = offensiveScore(mine, mineBattle, opponent);
-        score -= offensiveThreatScore(opponent, mine);
-        return score;
+        return BattleAdvisor.matchup(mine, mineBattle, opponent, mineBattle == null || mineBattle.getActive()).score();
     }
 
-    private static int offensiveScore(Pokemon attacker, ShowdownPokemon battleData, ClientBattlePokemon defender) {
-        double best = 0.0D;
-        boolean hasDamagingMove = false;
-        for (Move move : attacker.getMoveSet()) {
-            if (move == null || move.getDamageCategory() == DamageCategories.INSTANCE.getSTATUS() || move.getPower() <= 0.0D) {
-                continue;
-            }
-            hasDamagingMove = true;
-            best = Math.max(best, effectiveMoveMultiplier(move.getTemplate().getEffectiveElementalType(attacker), defenderTypes(defender),
-                    normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
+    static BattleMatchupPolicy.MoveKnowledge opponentMoves(ClientBattlePokemon pokemon) {
+        List<String> known = pokemon.getProperties().getMoves();
+        List<String> trainer = trainerSpecificMoves(pokemon);
+        List<String> revealed = known == null ? List.of() : known.stream().map(CobblemonTeamAdvisor::normalizedId).toList();
+        var precise = BattleMatchupPolicy.resolveMoves(revealed, trainer, List.of(), List.of());
+        if (precise.complete()) return precise;
+        List<String> fallback = new ArrayList<>();
+        for (MoveTemplate move : pokemon.getSpecies().getForm(pokemon.getProperties().getAspects()).getMoves()
+                .getLevelUpMovesUpTo(pokemon.getLevel())) {
+            fallback.add(move.getName());
         }
-
-        if (!hasDamagingMove && battleData != null) {
-            for (String moveName : battleData.getMoves()) {
-                MoveTemplate move = Moves.getByName(moveName);
-                if (move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D) {
-                    hasDamagingMove = true;
-                    best = Math.max(best, effectiveMoveMultiplier(move.getElementalType(), defenderTypes(defender),
-                            normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
-                }
-            }
-        }
-
-        if (!hasDamagingMove) {
-            for (ElementalType type : types(attacker)) {
-                best = Math.max(best, effectiveMoveMultiplier(type, defenderTypes(defender),
-                        normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName())));
-            }
-        }
-        return BattleMatchupPolicy.offensiveScore(best);
-    }
-
-    private static int offensiveThreatScore(ClientBattlePokemon attacker, Pokemon defender) {
-        List<ElementalType> defenderTypes = types(defender);
-        String defenderAbility = normalizedAbility(defender.getAbility().getName());
-        String attackerAbility = normalizedAbility(attacker.getProperties().getAbility());
-        List<MoveTemplate> moves = opponentThreatMoves(attacker);
-        double best = 0.0D;
-        // Apply abilities to each move before taking the worst threat: coverage can bypass an immunity.
-        for (MoveTemplate move : moves) {
-            best = Math.max(best, effectiveMoveMultiplier(move.getElementalType(), defenderTypes, defenderAbility, attackerAbility));
-        }
-        if (moves.isEmpty()) {
-            for (ElementalType type : defenderTypes(attacker)) {
-                best = Math.max(best, effectiveMoveMultiplier(type, defenderTypes, defenderAbility, attackerAbility));
-            }
-        }
-        return BattleMatchupPolicy.threatScore(best);
-    }
-
-    private static List<MoveTemplate> opponentThreatMoves(ClientBattlePokemon pokemon) {
-        List<MoveTemplate> moves = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        List<String> knownMoves = pokemon.getProperties().getMoves();
-        if (knownMoves != null) {
-            for (String moveName : knownMoves) {
-                MoveTemplate move = damagingMove(moveName);
-                if (move != null && seen.add(move.getName())) {
-                    moves.add(move);
-                }
-            }
-        }
-
-        if (moves.size() < 4) {
-            for (String moveName : trainerSpecificMoves(pokemon)) {
-                MoveTemplate move = damagingMove(moveName);
-                if (move != null && seen.add(move.getName())) {
-                    moves.add(move);
-                }
-            }
-        }
-
-        if (moves.size() < 4) {
-            List<String> trainerMoves = COBBLEVERSE_TRAINER_MOVES.get(trainerMoveKey(pokemon));
-            if (trainerMoves != null) {
-                for (String moveName : trainerMoves) {
-                    MoveTemplate move = damagingMove(moveName);
-                    if (move != null && seen.add(move.getName())) {
-                        moves.add(move);
-                    }
-                }
-            }
-        }
-
-        if (moves.size() < 4) {
-            Set<String> aspects = pokemon.getProperties().getAspects();
-            for (MoveTemplate move : pokemon.getSpecies().getForm(aspects).getMoves().getLevelUpMovesUpTo(pokemon.getLevel())) {
-                if (isDamaging(move) && seen.add(move.getName())) {
-                    moves.add(move);
-                }
-            }
-        }
-        return moves;
+        return BattleMatchupPolicy.resolveMoves(revealed, trainer,
+                COBBLEVERSE_TRAINER_MOVES.getOrDefault(trainerMoveKey(pokemon), List.of()), fallback);
     }
 
     private static String trainerMoveKey(ClientBattlePokemon pokemon) {
@@ -529,24 +450,16 @@ public final class CobblemonTeamAdvisor {
             return exact.get(memberKey);
         }
 
-        for (Map.Entry<String, Map<String, List<String>>> entry : COBBLEVERSE_TRAINER_MOVES_BY_NAME.entrySet()) {
-            if (actorName.contains(entry.getKey())) {
-                List<String> moves = entry.getValue().get(memberKey);
-                if (moves != null) {
-                    return moves;
-                }
+        String longest = "";
+        List<String> best = List.of();
+        for (var entry : COBBLEVERSE_TRAINER_MOVES_BY_NAME.entrySet()) {
+            if (entry.getKey().length() >= 3 && entry.getKey().length() > longest.length() && actorName.contains(entry.getKey())
+                    && entry.getValue().containsKey(memberKey)) {
+                longest = entry.getKey();
+                best = entry.getValue().get(memberKey);
             }
         }
-        return List.of();
-    }
-
-    private static MoveTemplate damagingMove(String moveName) {
-        MoveTemplate move = Moves.getByName(moveName);
-        return isDamaging(move) ? move : null;
-    }
-
-    private static boolean isDamaging(MoveTemplate move) {
-        return move != null && move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS() && move.getPower() > 0.0D;
+        return best;
     }
 
     private static BattleMoveSelection.MoveTile bestMoveTile(BattleMoveSelection selection) {
@@ -567,45 +480,19 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static double moveScore(BattleMoveSelection.MoveTile tile) {
-        Pokemon attacker = tile.getPokemon();
-        MoveTemplate move = tile.getMoveTemplate();
-        if (attacker == null || !isDamaging(move)) {
-            return 0.0D;
-        }
-
-        ActiveClientBattlePokemon target = target(tile);
-        if (target == null || !target.hasPokemon()) {
-            return 0.0D;
-        }
-
-        ClientBattlePokemon defender = target.getBattlePokemon();
-        double damageRatio = estimatedDamage(attacker, defender, move, tile.getElementalType()) / estimatedMaxHp(defender);
-        return likelyKos(tile) ? damageRatio + 2.0D : damageRatio;
+        return BattleAdvisor.moveAdvice(tile).score();
     }
 
     private static boolean likelyKos(BattleMoveSelection.MoveTile tile) {
-        Pokemon attacker = tile.getPokemon();
-        MoveTemplate move = tile.getMoveTemplate();
-        if (attacker == null || !isDamaging(move)) {
-            return false;
-        }
-
-        ActiveClientBattlePokemon target = target(tile);
-        if (target == null || !target.hasPokemon()) {
-            return false;
-        }
-
-        ClientBattlePokemon defender = target.getBattlePokemon();
-        double currentHpRatio = defender.getMaxHp() <= 0.0F ? 1.0D : defender.getHpValue() / defender.getMaxHp();
-        double damageRatio = estimatedDamage(attacker, defender, move, tile.getElementalType()) / estimatedMaxHp(defender);
-        return damageRatio >= currentHpRatio;
+        return BattleAdvisor.moveAdvice(tile).ko();
     }
 
-    private static ActiveClientBattlePokemon target(BattleMoveSelection.MoveTile tile) {
+    static ActiveClientBattlePokemon target(BattleMoveSelection.MoveTile tile) {
         List<Targetable> targets = tile.getTargetList();
         if (targets != null) {
             for (Targetable target : targets) {
-                if (target instanceof ActiveClientBattlePokemon active && active.hasPokemon()) {
+                if (target instanceof ActiveClientBattlePokemon active && active.hasPokemon()
+                        && !active.isAllied(tile.getMoveSelection().getRequest().getActivePokemon())) {
                     return active;
                 }
             }
@@ -618,84 +505,7 @@ public final class CobblemonTeamAdvisor {
                 .orElse(null);
     }
 
-    private static double estimatedDamage(Pokemon attacker, ClientBattlePokemon defender, MoveTemplate move,
-                                          ElementalType attackType) {
-        int level = Math.max(1, attacker.getLevel());
-        double power = adjustedPower(move, attacker, defender);
-        boolean special = move.getDamageCategory() == DamageCategories.INSTANCE.getSPECIAL();
-        double attack = Math.max(1, attacker.getStat(special ? Stats.SPECIAL_ATTACK : Stats.ATTACK));
-        double defence = Math.max(1, estimatedStat(defender, special ? Stats.SPECIAL_DEFENCE : Stats.DEFENCE));
-        double stab = types(attacker).stream().anyMatch(type -> type == attackType || type.showdownId().equals(attackType.showdownId())) ? 1.5D : 1.0D;
-        double type = effectiveMoveMultiplier(attackType, defenderTypes(defender),
-                normalizedAbility(defender.getProperties().getAbility()), normalizedAbility(attacker.getAbility().getName()));
-        double base = (((2.0D * level / 5.0D + 2.0D) * power * attack / defence) / 50.0D) + 2.0D;
-        return base * stab * type * 0.925D;
-    }
-
-    private static double adjustedPower(MoveTemplate move, Pokemon attacker, ClientBattlePokemon defender) {
-        String name = move.getName().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
-        double power = move.getPower();
-        boolean defenderStatused = defender.getStatus() != null;
-        boolean attackerStatused = attacker.getStatus() != null && attacker.getStatus().getStatus() != null;
-        double defenderHpRatio = defender.getMaxHp() <= 0.0F ? 1.0D : defender.getHpValue() / defender.getMaxHp();
-
-        if (("hex".equals(name) || "venoshock".equals(name) || "infernalparade".equals(name)
-                || "barbbarrage".equals(name)) && defenderStatused) {
-            power *= 2.0D;
-        } else if ("facade".equals(name) && attackerStatused) {
-            power *= 2.0D;
-        } else if ("brine".equals(name) && defenderHpRatio <= 0.5D) {
-            power *= 2.0D;
-        }
-        return power;
-    }
-
-    private static double estimatedMaxHp(ClientBattlePokemon pokemon) {
-        return Math.max(1, estimatedHp(pokemon));
-    }
-
-    private static int estimatedHp(ClientBattlePokemon pokemon) {
-        int level = Math.max(1, pokemon.getLevel());
-        int base = baseStat(pokemon, Stats.HP);
-        return (int) Math.floor(((2 * base + 31) * level) / 100.0D) + level + 10;
-    }
-
-    private static int estimatedStat(ClientBattlePokemon pokemon, Stats stat) {
-        int level = Math.max(1, pokemon.getLevel());
-        int base = baseStat(pokemon, stat);
-        return (int) Math.floor(((2 * base + 31) * level) / 100.0D) + 5;
-    }
-
-    private static int baseStat(ClientBattlePokemon pokemon, Stat stat) {
-        Integer value = pokemon.getSpecies().getBaseStats().get(stat);
-        return value == null ? 1 : value;
-    }
-
-    private static List<ElementalType> types(Pokemon pokemon) {
-        return iterableToList(pokemon.getTypes());
-    }
-
-    private static List<ElementalType> defenderTypes(ClientBattlePokemon pokemon) {
-        return iterableToList(pokemon.getSpecies().getTypes());
-    }
-
-    private static List<ElementalType> iterableToList(Iterable<ElementalType> iterable) {
-        List<ElementalType> types = new ArrayList<>();
-        for (ElementalType type : iterable) {
-            if (type != null) {
-                types.add(type);
-            }
-        }
-        return types;
-    }
-
-    private static double effectiveMoveMultiplier(ElementalType attackType, Collection<ElementalType> defenderTypes,
-                                                  String defenderAbility, String attackerAbility) {
-        return BattleMatchupPolicy.effectiveMultiplier(moveMultiplier(attackType, defenderTypes),
-                attackType.showdownId(), defenderAbility, attackerAbility);
-    }
-
-    private static double moveMultiplier(ElementalType attackType, Collection<ElementalType> defenderTypes) {
+    static double moveMultiplier(ElementalType attackType, Collection<ElementalType> defenderTypes) {
         String attack = attackType.showdownId();
         double multiplier = 1.0D;
         for (ElementalType defenderType : defenderTypes) {
@@ -705,11 +515,7 @@ public final class CobblemonTeamAdvisor {
         return multiplier;
     }
 
-    private static String normalizedAbility(String ability) {
-        return ability == null ? null : ability.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
-    }
-
-    private static String normalizedId(String value) {
+    static String normalizedId(String value) {
         return value == null ? "" : value.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }
 

@@ -18,12 +18,19 @@ The JSON file includes Cobblemon's serialized Pokemon data. The CSV file include
 - When `AUTO ON`, automatically clicks `FIGHT` or `SWITCH` from the root battle menu, then selects the highest-scored move or best available switch.
 - If no move has a positive score and no switch is useful, `AUTO ON` still selects a legal fallback move so the battle continues.
 - Prioritizes immunity and resistance to the opponent's worst assumed damaging move over offensive type advantage. Ability immunities apply per attack, so coverage moves can still make a matchup unsafe.
-- When `AUTO ON`, proactively switches whenever the best available bench Pokemon scores at least `+2` better, even if the active Pokemon has a positive score. Ties and marginal improvements keep the active Pokemon in, and trapped Pokemon do not attempt to switch.
-- Uses a bundled Cobbleverse trainer snapshot to score known trainer moves by trainer name plus visible enemy species and level before falling back to species-level and level-up moves.
-- Assumes worst-case known enemy level-up damaging moves until the opponent reveals more exact moves.
+- Scores live HP, actual friendly defensive stats, visible stat boosts, status, and estimated incoming damage. A switch must survive estimated entry damage, the enemy's strongest hit, and modeled status damage.
+- When `AUTO ON`, proactively switches to a meaningfully better surviving option. Switching costs a turn and can lose boosts; ties and marginal improvements keep the active Pokemon in, and trapped Pokemon do not attempt to switch.
+- Stays in for an estimated reliable KO before the enemy acts. Compares speed, move priority, paralysis, visible boosts, Choice Scarf, Tailwind, and Trick Room; speed ties do not count as acting first.
+- Uses a bundled Cobbleverse trainer snapshot matched by trainer name plus enemy species and level. An unambiguous trainer set or four revealed moves prevents speculative coverage from being added, including when the set contains status moves. Conflicting reveals and merged trainer variants fall back to conservative assumptions.
+- Tracks entry hazards, their removal and Court Change through translation keys in client battle messages. Scores Stealth Rock, Spikes, Toxic Spikes and Sticky Web, including airborne Pokemon, Heavy-Duty Boots and Magic Guard.
+- Scores attack accuracy, common recoil and draining effects, fixed-damage attacks, healing, common status moves, safe setup, and hazard utility. Avoids full-health healing and capped or unsafe setup.
+- Shows a short recommendation explaining the chosen move or switch and whether enemy moves are known or assumed.
+- Assumes worst-case damaging coverage from species-level and level-up moves when the enemy set is uncertain.
 - Ignores TM, tutor, egg, and other inconsistent move sources for enemy assumptions.
 
-Scores are a compact hint, not a simulator. They combine your best current offensive matchup with a much larger defensive weight for the opponent's likely offensive threat. They account for common ability immunities, Thick Fat, and ability bypasses such as Mold Breaker. Scores are not capped, so strong defensive matchups remain distinguishable.
+Scores are estimates, not a full battle simulator. Enemy stats use synchronized values where available and estimates otherwise. Damage rolls, common move effects and abilities are modeled; weather, terrain, many volatile effects, and some unusual moves are not. Unsupported utility moves remain legal fallbacks. Multi-Pokemon battles still use the selected or first adjacent opponent rather than planning a whole turn across all opponents.
+
+The trainer snapshot contains some merged variants with more than four moves; these are labeled `assumed moves`, not treated as exact sets. Bundled move-effect metadata is extracted from the profile's Cobblemon Showdown data. Hazard state resets between battles and is learned from messages received during the current battle.
 
 ## Build
 
@@ -33,4 +40,6 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.7.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.8.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+
+`build` also runs regression checks for defensive scoring, survival, speed and priority, accuracy and recoil, healing, trainer-set precedence, and field conditions. Live gameplay must still be checked in Minecraft.
