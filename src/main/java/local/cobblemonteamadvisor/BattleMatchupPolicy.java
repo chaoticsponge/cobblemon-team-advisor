@@ -56,6 +56,12 @@ final class BattleMatchupPolicy {
                 + 4 * Math.min(3, remaining / Math.max(1, incoming + residual)));
     }
 
+    static double healthFraction(double value, double maxHp, boolean flat) {
+        if (!Double.isFinite(value) || flat && (!Double.isFinite(maxHp) || maxHp <= 0)) return 1;
+        // Public opponent HP is already 0..1 even when maxHp contains the real HP stat.
+        return Math.max(0, Math.min(1, flat ? value / maxHp : value));
+    }
+
     static boolean normalHitKo(double minimumDamage, double hp, boolean knownHp) {
         return knownHp && hp > 0 && minimumDamage >= hp;
     }

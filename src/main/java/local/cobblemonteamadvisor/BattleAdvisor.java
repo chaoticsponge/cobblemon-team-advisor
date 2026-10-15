@@ -266,7 +266,7 @@ public final class BattleAdvisor {
         ClientBattlePokemon pokemon = pair.getSecond().getBattlePokemon();
         double maximum = packet.getNewMaxHealth() == null ? pokemon.getMaxHp() : packet.getNewMaxHealth();
         if (pendingHit != null && pendingHit.target.equals(pokemon.getUuid())) {
-            double after = maximum > 0 ? packet.getNewHealth() / maximum : 1;
+            double after = BattleMatchupPolicy.healthFraction(packet.getNewHealth(), maximum, pokemon.isHpFlat());
             observations.damage(pendingHit.key, pendingHit.predicted, pendingHit.before - after,
                     pendingHit.clean && packet.getNewMaxHealth() == null, after <= 0);
             pendingHit = null;
@@ -376,7 +376,7 @@ public final class BattleAdvisor {
             if (own != null) {
                 value = own.getStat(stat);
             } else {
-                int base = live.getSpecies().getForm(live.getProperties().getAspects()).getBaseStats().getOrDefault(stat, 1);
+                int base = live.getSpecies().getForm(live.getState().getCurrentAspects()).getBaseStats().getOrDefault(stat, 1);
                 TrainerRoster.Member member = trainerMember(live);
                 int iv = live.getProperties().getIvs() != null ? live.getProperties().getIvs().getOrDefault(stat)
                         : member != null && member.ivs() != null ? member.ivs().getOrDefault(stat.getShowdownId(), 31) : 31;
@@ -543,7 +543,7 @@ public final class BattleAdvisor {
 
     private static boolean raid(ClientBattlePokemon pokemon) {
         return RAID_CACHE.computeIfAbsent(pokemon.getUuid(), ignored -> {
-            if (pokemon.getProperties().getAspects().contains("raid")) return true;
+            if (pokemon.getState().getCurrentAspects().contains("raid")) return true;
             var level = Minecraft.getInstance().level;
             if (level == null) return false;
             var dimension = level.dimension().location();
@@ -564,7 +564,7 @@ public final class BattleAdvisor {
     }
 
     private static Fighter enemy(ClientBattlePokemon pokemon) {
-        var form = pokemon.getSpecies().getForm(pokemon.getProperties().getAspects());
+        var form = pokemon.getSpecies().getForm(pokemon.getState().getCurrentAspects());
         List<ElementalType> types = new ArrayList<>();
         for (ElementalType type : form.getTypes()) types.add(type);
         TrainerRoster.Member member = trainerMember(pokemon);
@@ -575,7 +575,7 @@ public final class BattleAdvisor {
         double max = Math.floor((2 * form.getBaseStats().getOrDefault(Stats.HP, 1) + iv + ev / 4)
                 * pokemon.getLevel() / 100.0D) + pokemon.getLevel() + 10;
         if (pokemon.getSpecies().getName().equalsIgnoreCase("shedinja")) max = 1;
-        if (pokemon.isHpFlat() && pokemon.getMaxHp() > 0) max = pokemon.getMaxHp();
+        if (pokemon.getMaxHp() > 1 || pokemon.isHpFlat() && pokemon.getMaxHp() > 0) max = pokemon.getMaxHp();
         return new Fighter(null, pokemon, types, id(pokemon.getProperties().getAbility() != null ? pokemon.getProperties().getAbility()
                 : member == null ? null : member.ability()), id(pokemon.getProperties().getHeldItem() != null ? pokemon.getProperties().getHeldItem()
                 : member == null ? null : member.heldItem()), pokemon.getStatus() == null ? "" : pokemon.getStatus().getShowdownName(),
@@ -583,7 +583,8 @@ public final class BattleAdvisor {
     }
 
     private static double hpFraction(ClientBattlePokemon pokemon) {
-        return pokemon.getMaxHp() <= 0 ? 1 : Math.max(0, Math.min(1, HEALTH.getOrDefault(pokemon.getUuid(), pokemon.getHpValue()) / pokemon.getMaxHp()));
+        return BattleMatchupPolicy.healthFraction(HEALTH.getOrDefault(pokemon.getUuid(), pokemon.getHpValue()),
+                pokemon.getMaxHp(), pokemon.isHpFlat());
     }
 
     private static ClientBattlePokemon livePokemon(UUID id) {
@@ -994,7 +995,7 @@ public final class BattleAdvisor {
         double power = move.getPower();
         if (moveId.equals("lowkick") || moveId.equals("grassknot")) {
             double weight = defender.own != null ? defender.own.getForm().getWeight()
-                    : defender.live.getSpecies().getForm(defender.live.getProperties().getAspects()).getWeight();
+                    : defender.live.getSpecies().getForm(defender.live.getState().getCurrentAspects()).getWeight();
             power = weight < 10 ? 20 : weight < 25 ? 40 : weight < 50 ? 60 : weight < 100 ? 80 : weight < 200 ? 100 : 120;
         } else if (power <= 0) {
             power = roll == 1 ? 120 : 40; // Conservative bounds for other variable-power attacks.

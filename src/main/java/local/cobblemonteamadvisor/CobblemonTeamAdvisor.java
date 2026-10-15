@@ -432,7 +432,7 @@ public final class CobblemonTeamAdvisor {
         var precise = BattleMatchupPolicy.resolveMoves(revealed, trainer, List.of(), List.of());
         if (precise.complete()) return precise;
         List<String> fallback = new ArrayList<>();
-        for (MoveTemplate move : pokemon.getSpecies().getForm(pokemon.getProperties().getAspects()).getMoves()
+        for (MoveTemplate move : pokemon.getSpecies().getForm(pokemon.getState().getCurrentAspects()).getMoves()
                 .getLevelUpMovesUpTo(pokemon.getLevel())) {
             fallback.add(move.getName());
         }

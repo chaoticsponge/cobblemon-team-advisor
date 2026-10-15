@@ -5,6 +5,22 @@ import java.util.UUID;
 
 public final class BattleMatchupPolicyTest {
     public static void main(String[] args) {
+        double remaining = BattleMatchupPolicy.healthFraction(0.75, 120, false) * 120;
+        require(remaining == 90, "Opponent 75% HP must remain 90/120, not be divided by max HP twice");
+        require(!BattleMatchupPolicy.normalHitKo(26, remaining, true), "Feint dealing about 25% must not KO a 75%-healthy Vivillon");
+        require(BattleMatchupPolicy.normalHitKo(130, remaining, true), "A stronger normal hit must retain its real finishing advantage");
+        require(BattleMatchupPolicy.healthFraction(90, 120, true) == 0.75, "Allied flat HP must still be divided by its maximum");
+        require(BattleMatchupPolicy.healthFraction(1, 120, false) == 1, "Full opponent HP must not look nearly fainted");
+        require(BattleMatchupPolicy.healthFraction(0.75, 1, false) == 0.75, "Normalized-max public HP must also work");
+        require(BattleMatchupPolicy.healthFraction(0, 120, false) == 0, "A fainted opponent must stay fainted");
+        require(BattleMatchupPolicy.healthFraction(0, 120, true) == 0, "A fainted ally must stay fainted");
+        require(BattleMatchupPolicy.healthFraction(Double.NaN, 120, false) == 1, "Invalid health must not create a false near-fainted target");
+        double observed = BattleMatchupPolicy.healthFraction(1, 120, false) - BattleMatchupPolicy.healthFraction(0.75, 120, false);
+        require(observed == 0.25, "Damage learning must record a quarter-health hit as 25%, not 0.2%");
+        var hpObservations = new BattleObservations();
+        var hpKey = new BattleObservations.DamageKey(UUID.randomUUID(), UUID.randomUUID(), "feint", "normal");
+        hpObservations.damage(hpKey, 0.25, observed, true, false);
+        require(hpObservations.damageFactor(hpKey) == 1, "Correctly predicted quarter-health hits must not distort damage calibration");
         require(BattleMatchupPolicy.normalHitKo(120, 100, true), "Overkill on the minimum normal roll must qualify as KO");
         require(BattleMatchupPolicy.normalHitKo(100, 100, true), "An exact minimum-damage KO must qualify");
         require(!BattleMatchupPolicy.normalHitKo(85, 100, true), "A high roll or random crit must not turn 85 minimum damage into a guaranteed KO");
