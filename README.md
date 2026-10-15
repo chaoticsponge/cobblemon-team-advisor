@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.10.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.11.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -58,3 +58,11 @@ The built mod is at `build/libs/cobblemon-team-advisor-1.10.0.jar`. Copy it into
 Raid Dens bosses are detected from their raid aspect, a matching world entity, or the Raid Dens dimension. The server does not sync their scaled shared HP total. During detected raids, the advisor suppresses KO labels and outgoing KO predictions in the survival planner, and ranks attacks by uncapped expected damage alongside survival and move effects. Shared raid damage does not train the ordinary single-battle damage estimator. It cannot promise a raid KO from a hidden HP pool.
 
 In trainer and ordinary battles, the finishing preference uses minimum normal damage, including deterministic critical-hit moves but excluding random critical hits. It rewards moves that cover the remaining HP above moves needing a high roll, while retaining accuracy, turn order, status and recoil checks. `KO` means the estimated minimum damage suffices on a hit; `KO*` indicates the move can miss. The hint gives accuracy separately. Hidden stats and abilities can still make these estimates uncertain.
+
+### Private Pokédex scan summaries
+
+Completing a Pokédex scan prints a compact, colored summary in the scanning player's local chat. It shows the apparent species and form, combined-type weaknesses (×2 / ×4), resistances (×½ / ×¼), immunities, and offensive type strengths against single-type opponents. These are type-chart matchups; abilities, items and battle effects can change them.
+
+The evolution guide lists the next branches and their level, item, trade, friendship, move, time, regional biome and other requirements. Four branches appear directly; additional branches are grouped into hover details. Registered Pokémon also get a summary after the scanner focuses, and repeated frames/registration packets do not repeat the same message. Close and reopen the scanner to scan the same target again.
+
+Messages are added only to the local client's chat, with no chat packets or broadcasts. Each player who wants this feature installs the client mod. Evolution reference data comes from Cobblemon 1.7.3: multiplayer servers do not sync private evolution datapacks, so the message notes that server rules may differ. Unknown species/forms are marked unavailable rather than assigned another form's evolution.

@@ -4,9 +4,9 @@ license="All Rights Reserved"
 
 [[mods]]
 modId="cobblemonteamadvisor"
-version="1.10.0"
+version="1.11.0"
 displayName="Cobblemon Team Advisor"
-description='''Exports Cobblemon party and PC data for AI team planning, then adds client-side battle switch scores and KO move hints.'''
+description='''Exports Cobblemon party and PC data for AI team planning, then adds client-side battle advice and private Pokédex scan summaries with type matchups and evolution requirements.'''
 
 [[dependencies.cobblemonteamadvisor]]
 modId="neoforge"
