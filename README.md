@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.12.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.12.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -78,3 +78,9 @@ Trainer, wild and raid battles share one damage calculation and move-ranking pol
 The calculator combines attack/defence stats, STAB, weaknesses/resistances, known abilities, items, field conditions and move-specific power. Added modifiers cover low-power/contact/punch/bite/pulse/slicing/sound/secondary-effect boosts, low-HP starter abilities, type-converting abilities, defensive damage reductions, Hustle, Compound Eyes, and variable-power moves including Acrobatics. Multi-hit KO estimates use hit-count probabilities, Skill Link and Loaded Dice. Random critical hits do not contribute to normal-hit KO odds. Feint and other protection-breaking moves can bypass Protect in the planner.
 
 The planner caps damage to remaining HP before multiplying by hit probability, preventing inaccurate overkill from becoming a certain knockout. Detected raids with hidden shared HP use uncapped expected damage and survival advice without false KO claims. Hidden enemy stats, server-specific mechanics and unsupported special effects remain estimates; this is a client-side advisor, not the server's battle simulator.
+
+### Preventing switch loops
+
+Active and benched Pokémon use the same matchup score; benched Pokémon no longer get an extra planning bonus. Safe, accurate immediate KOs take precedence over voluntary switches even if an enemy could use a harmless priority move first. Small incoming hits do not justify switching for a type-score improvement alone.
+
+After a confirmed automatic voluntary switch, the incoming Pokémon must use a move before another routine switch against the same opponent. Emergency switches remain possible if it risks fainting, or cannot damage the target and the replacement can. An opponent change allows a fresh counter-switch, and forced replacements and rejected choices do not create the lock. State resets with each battle and is tracked separately for each incoming Pokémon.

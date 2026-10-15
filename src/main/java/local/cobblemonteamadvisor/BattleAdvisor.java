@@ -56,6 +56,7 @@ public final class BattleAdvisor {
     private static final Map<UUID, Set<String>> OBSERVED_MOVES = new HashMap<>();
     private static BattleObservations observations = new BattleObservations();
     private static BattleActionGuard guard = new BattleActionGuard();
+    private static BattleSwitchPolicy switchPolicy = new BattleSwitchPolicy();
     private static SingleActionRequest submittedRequest;
     private static UUID submittedSwitch;
     private record PendingHit(UUID target, double before, double predicted, BattleObservations.DamageKey key, boolean clean) { }
@@ -88,6 +89,7 @@ public final class BattleAdvisor {
             moveState = new BattleMoveState();
             observations = new BattleObservations();
             guard = new BattleActionGuard();
+            switchPolicy = new BattleSwitchPolicy();
             SEEN_TEAMS.clear(); FAINTED.clear(); HEALTH.clear(); OBSERVED_MOVES.clear();
             submittedRequest = null; submittedSwitch = null;
             pendingHit = null; firstMove = null; randomOrder = false;
@@ -104,6 +106,7 @@ public final class BattleAdvisor {
         syncBattle();
         if (battleId != null) {
             moveState.enter(pokemon);
+            switchPolicy.entered(pokemon);
             HEALTH.remove(pokemon);
             pendingHit = null;
         }
@@ -135,10 +138,18 @@ public final class BattleAdvisor {
     static void submittedSwitch(SingleActionRequest request, UUID pokemon) {
         submittedRequest = request;
         submittedSwitch = pokemon;
+        UUID opponent = null;
+        for (var target : request.getActivePokemon().getAdjacentOpponents()) {
+            if (target instanceof com.cobblemon.mod.common.client.battle.ActiveClientBattlePokemon foe && foe.hasPokemon()) {
+                opponent = foe.getBattlePokemon().getUuid(); break;
+            }
+        }
+        switchPolicy.submitted(pokemon, opponent, request.getForceSwitch());
     }
 
     public static void observeInvalidChoice() {
         syncBattle();
+        switchPolicy.rejected();
         if (submittedRequest != null && submittedSwitch != null) {
             guard.reject(submittedRequest, submittedSwitch);
             com.mojang.logging.LogUtils.getLogger().warn("Advisor suppressed a rejected switch for the current request");
@@ -231,6 +242,7 @@ public final class BattleAdvisor {
     }
 
     private static void beginMove(ClientBattlePokemon user, MoveTemplate move, Object targetArgument) {
+        switchPolicy.acted(user.getUuid());
         pendingHit = null;
         Fighter attacker = fighter(user);
         ClientBattlePokemon target = namedPokemon(targetArgument);
@@ -360,9 +372,9 @@ public final class BattleAdvisor {
     }
 
     record Matchup(int score, boolean survives, double incoming, double entry, String reason) { }
-    record MoveAdvice(double score, boolean ko, boolean firstKo, String reason, double accuracy) {
+    record MoveAdvice(double score, boolean ko, boolean firstKo, String reason, double accuracy, boolean safeKo) {
         MoveAdvice(double score, boolean ko, boolean firstKo, String reason) {
-            this(score, ko, firstKo, reason, 1);
+            this(score, ko, firstKo, reason, 1, false);
         }
         String koLabel() { return ko ? accuracy >= 1 ? "KO" : "KO*" : ""; }
     }
@@ -657,7 +669,6 @@ public final class BattleAdvisor {
                 + (int) Math.round(Math.min(2, bestDamage / Math.max(1, foe.hp)) * 2);
         if (bestDamage == 0) score -= 30;
         if (entryPoison) score -= 4;
-        if (!active) score += (int) Math.round(switchPlan(pokemon, showdown, opponent).value() / 5);
         boolean survives = own.hp > entry + incoming + Math.max(0, residual);
         String reason = own.hp <= entry ? "entry hazards would KO" : !survives ? "risks KO on next hit"
                 : !hasDamagingMove && !moves.isEmpty() ? "no damaging moves in known set"
@@ -782,12 +793,32 @@ public final class BattleAdvisor {
         if (active == null || opponent == null || candidate == null || selection.getMoveSet().getTrapped()
                 || !canSwitch(selection.getRequest(), candidate, showdown)) return false;
         for (var tile : selection.getMoveTiles()) {
-            if (tile.getSelectable() && moveAdvice(tile).firstKo()) return false;
+            if (tile.getSelectable() && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo())) return false;
         }
         Matchup current = matchup(active, null, opponent, true);
         Matchup next = matchup(candidate, showdown, opponent, false);
         if (!next.survives()) return false;
         Fighter own = mine(active, null, true);
+        Fighter foe = enemy(opponent);
+        boolean canDamage = false;
+        for (var tile : selection.getMoveTiles()) {
+            if (tile.getSelectable() && Double.isFinite(moveAdvice(tile).score()) && damaging(tile.getMoveTemplate())
+                    && damage(own, foe, tile.getMoveTemplate(), tile.getElementalType(), 0.85) > 0) {
+                canDamage = true; break;
+            }
+        }
+        Fighter replacement = mine(candidate, showdown, false);
+        boolean replacementCanDamage = false;
+        if (!canDamage) {
+            for (Move move : candidate.getMoveSet()) {
+                if (move != null && move.getCurrentPp() > 0 && damaging(move.getTemplate())
+                        && damage(replacement, foe, move.getTemplate(), move.getTemplate().getEffectiveElementalType(candidate), 0.85) > 0) {
+                    replacementCanDamage = true; break;
+                }
+            }
+        }
+        if (!switchPolicy.allows(active.getUuid(), opponent.getUuid(),
+                BattleSwitchPolicy.emergency(!current.survives(), canDamage, replacementCanDamage))) return false;
         int lostBoosts = 0;
         for (Stats stat : List.of(Stats.ATTACK, Stats.SPECIAL_ATTACK, Stats.DEFENCE, Stats.SPECIAL_DEFENCE, Stats.SPEED)) {
             lostBoosts += Math.max(0, own.stage(stat));
@@ -799,9 +830,8 @@ public final class BattleAdvisor {
         BattlePlanner.Plan switchPlan = switchPlan(candidate, showdown, opponent);
         int cost = current.survives() ? 4 + Math.min(8, lostBoosts * 2) : 0;
         double gain = switchPlan.value() - stayValue;
-        if (gain >= 6 + cost) return true;
-        if (gain < -3) return false;
-        return BattleMatchupPolicy.shouldSwitch(current.score() + cost, next.score());
+        return BattleSwitchPolicy.worthwhile(gain, cost, current.score(), next.score(),
+                current.incoming() / Math.max(1, own.hp), next.incoming() / Math.max(1, replacement.hp - next.entry()));
     }
 
     static MoveAdvice moveAdvice(BattleMoveSelection.MoveTile tile) {
@@ -887,7 +917,7 @@ public final class BattleAdvisor {
         double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damagePerTurn / Math.max(1, foe.maxHp),
                 accuracy * actionChance, chance * actionChance, canFinish, unknownHp);
         if (chance == 0 && !forecast.survives()) value -= 100;
-        return new MoveAdvice(value, ko, firstKo, reason, accuracy);
+        return new MoveAdvice(value, ko, firstKo, reason, accuracy, ko && accuracy >= 1 && canFinish && actionChance >= 1);
     }
 
     private static MoveAdvice utility(Fighter own, Fighter foe, MoveTemplate move, double accuracy, double incoming, double before) {
