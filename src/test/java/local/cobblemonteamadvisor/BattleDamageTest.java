@@ -58,6 +58,14 @@ final class BattleDamageTest {
                         > BattleMatchupPolicy.moveValue(0, 0, 5, 1, 0.0, true, true),
                 "Raid damage must remain uncapped when both attacks exceed ordinary species HP");
 
+        double weakNormal = BattleMatchupPolicy.moveValue(60, 1, 0.25, 1, 0.0, true, false);
+        double strongElemental = BattleMatchupPolicy.moveValue(10, -1, 0.5, 1, 0.0, true, false);
+        check(strongElemental > weakNormal,
+                "A 50%-damage elemental attack must beat 25%-damage Normal chip despite routine forecast/recoil bonuses");
+        check(BattleMatchupPolicy.moveValue(0, 0, 0.8, 1, 0.0, true, false)
+                        > BattleMatchupPolicy.moveValue(0, 0, 0.4, 1, 0.0, true, false),
+                "Selection must compare final damage, so Normal coverage can still win when it really deals more damage");
+
         var lastPp = new BattlePlanner.Action("finish", 120, 1, 0, 1, BattlePlanner.Effect.NONE, false, false, true);
         var fullPp = new BattlePlanner.Action("finish", 120, 1, 0, 15, BattlePlanner.Effect.NONE, false, false, true);
         var own = new BattlePlanner.Combatant(100, 100, 100, 0, 0, "", List.of(lastPp));

@@ -875,15 +875,18 @@ public final class BattleAdvisor {
         if (recoil > 0) reason += "; recoil " + Math.round(100 * recoil / own.maxHp) + "%";
         if (drain > 0) reason += "; heals " + Math.round(100 * drain / own.maxHp) + "%";
         if (!unknownHp && !forecast.next().isEmpty()) reason += "; then " + forecast.next();
-        boolean canFinish = before < own.hp && recoil < own.hp && !own.status.equals("slp") && !own.status.equals("frz");
+        boolean needsCharge = charging(own, move) && !moveState.hasEffect(own.uuid(), "charging");
+        boolean canFinish = before < own.hp && recoil < own.hp && !own.status.equals("slp") && !own.status.equals("frz")
+                && (!needsCharge || own.hp > incoming + before + Math.max(0, residual(own)));
         double chance = canHitNow && !unknownHp ? koChance(own, foe, move, tile.getElementalType(), accuracy) : 0;
         double actionChance = own.status.equals("par") ? 0.75 : 1;
         if (chance > 0 && !ko) reason = "normal-hit KO chance " + Math.round(100 * chance) + "%; " + reason;
         double damagePerTurn = damage;
         if (moveState.protectedNow(foe.uuid()) && !effect.has("breaksProtect")) damagePerTurn = 0;
-        if (charging(own, move) && !moveState.hasEffect(own.uuid(), "charging")) damagePerTurn /= 2;
+        if (needsCharge || effect.has("recharge")) damagePerTurn /= 2;
         double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damagePerTurn / Math.max(1, foe.maxHp),
                 accuracy * actionChance, chance * actionChance, canFinish, unknownHp);
+        if (chance == 0 && !forecast.survives()) value -= 100;
         return new MoveAdvice(value, ko, firstKo, reason, accuracy);
     }
 

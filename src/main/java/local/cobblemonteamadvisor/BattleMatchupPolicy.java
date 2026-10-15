@@ -88,9 +88,9 @@ final class BattleMatchupPolicy {
                             double koChance, boolean canFinish, boolean unknownHp) {
         // KO probability dominates planning/PP effects. Remaining PP only determines legality.
         double expected = canFinish ? Math.max(0, damageFraction * accuracy) : 0;
-        double damageScore = 5 * Math.log1p(expected);
+        double damageScore = unknownHp ? 100 * Math.log1p(expected) : 100 * Math.min(1, expected);
         return (unknownHp || !canFinish ? 0 : 1000 * koChance)
-                + (unknownHp ? damageScore : Math.min(5, damageScore))
+                + damageScore
                 + Math.max(-2, Math.min(2, forecast / 50)) + attackScore * 0.15;
     }
 

@@ -73,7 +73,7 @@ Opponent health values are already fractions even when Cobblemon supplies an abs
 
 ### KO-first move selection
 
-Trainer, wild and raid battles share one damage calculation and move-ranking policy. Estimated normal-hit KO probability takes precedence over two-turn planning benefits, then expected damage and battle consequences break ties. Current PP determines whether moves can be used or repeated; there is no reward for saving PP or an available opening move. Accuracy, turn order, recoil, immunities, charging and legal move restrictions still apply.
+Trainer, wild and raid battles share one damage calculation and move-ranking policy. Estimated normal-hit KO probability takes precedence over two-turn planning benefits, then effective expected damage drives attack ranking, with smaller planning and battle-consequence adjustments. Current PP determines whether moves can be used or repeated; there is no reward for saving PP or an available opening move. Accuracy, turn order, recoil, immunities, charging and legal move restrictions still apply.
 
 The calculator combines attack/defence stats, STAB, weaknesses/resistances, known abilities, items, field conditions and move-specific power. Added modifiers cover low-power/contact/punch/bite/pulse/slicing/sound/secondary-effect boosts, low-HP starter abilities, type-converting abilities, defensive damage reductions, Hustle, Compound Eyes, and variable-power moves including Acrobatics. Multi-hit KO estimates use hit-count probabilities, Skill Link and Loaded Dice. Random critical hits do not contribute to normal-hit KO odds. Feint and other protection-breaking moves can bypass Protect in the planner.
 
