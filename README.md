@@ -19,19 +19,27 @@ The JSON file includes Cobblemon's serialized Pokemon data. The CSV file include
 - If no move has a positive score and no switch is useful, `AUTO ON` still selects a legal fallback move so the battle continues.
 - Prioritizes immunity and resistance to the opponent's worst assumed damaging move over offensive type advantage. Ability immunities apply per attack, so coverage moves can still make a matchup unsafe.
 - Scores live HP, actual friendly defensive stats, visible stat boosts, status, and estimated incoming damage. A switch must survive estimated entry damage, the enemy's strongest hit, and modeled status damage.
+- Rejects self-switches using UUIDs from the live battlefield and current server request, excludes destinations reserved by another slot, and suppresses a rejected destination for the same request. AUTO only submits the current unanswered request.
+- Compares bounded two-turn sequences: attacking twice, healing or setting up before attacking, and switching while taking an enemy hit before attacking. Includes common protection, Substitute, charging, recharge, recoil, draining, and Rest sleep.
 - When `AUTO ON`, proactively switches to a meaningfully better surviving option. Switching costs a turn and can lose boosts; ties and marginal improvements keep the active Pokemon in, and trapped Pokemon do not attempt to switch.
 - Stays in for an estimated reliable KO before the enemy acts. Compares speed, move priority, paralysis, visible boosts, Choice Scarf, Tailwind, and Trick Room; speed ties do not count as acting first.
+- Uses full trainer rosters from Radical Cobblemon Trainers 0.18.1-beta when trainer name, observed species/levels and revealed moves uniquely match. Bundled stats, natures, abilities and unambiguous held items improve estimates; revealed data overrides assumptions.
+- Preserves unique defensive and offensive counters for a matched trainer's remaining team, accounting for observed faints and other healthy party alternatives. Ambiguous or contradicted rosters do not drive preservation.
 - Uses a bundled Cobbleverse trainer snapshot matched by trainer name plus enemy species and level. An unambiguous trainer set or four revealed moves prevents speculative coverage from being added, including when the set contains status moves. Conflicting reveals and merged trainer variants fall back to conservative assumptions.
 - Tracks entry hazards, their removal and Court Change through translation keys in client battle messages. Scores Stealth Rock, Spikes, Toxic Spikes and Sticky Web, including airborne Pokemon, Heavy-Duty Boots and Magic Guard.
 - Scores attack accuracy, common recoil and draining effects, fixed-damage attacks, healing, common status moves, safe setup, and hazard utility. Avoids full-health healing and capped or unsafe setup.
 - Tracks field entries and battle turns to avoid repeated First Impression, Fake Out and Mat Block failures. Also respects consecutive-use restrictions for Gigaton Hammer / Blood Moon, observed Last Resort prerequisites, and repeated No Retreat. Actual switch-in packets reset field-entry restrictions, including after manual switches; rejected button choices do not consume move history.
+- Tracks Taunt, Encore, Disable, choice-item move locks, Protect and Substitute. Field-entry changes clear the appropriate restrictions.
+- Models common weather and terrain effects on damage, speed, recovery, residual damage and status immunity, plus Reflect, Light Screen and Aurora Veil. Guaranteed critical-hit moves bypass screens as appropriate.
+- Learns damage corrections from clean, nonlethal single hits. Critical hits, residual damage, substitutes, multi-hit attacks and censored KO damage are excluded. Corrections are specific to the Pokemon, move and battle conditions.
+- Refines equal-priority turn-order estimates after repeated clean observations in singles. Priority, known speed changes and random-order effects are accounted for; conflicting observations remove the learned ordering.
 - Shows a short recommendation explaining the chosen move or switch and whether enemy moves are known or assumed.
 - Assumes worst-case damaging coverage from species-level and level-up moves when the enemy set is uncertain.
 - Ignores TM, tutor, egg, and other inconsistent move sources for enemy assumptions.
 
-Scores are estimates, not a full battle simulator. Enemy stats use synchronized values where available and estimates otherwise. Damage rolls, common move effects and abilities are modeled; weather, terrain, many volatile effects, and some unusual moves are not. Unsupported utility moves remain legal fallbacks. Multi-Pokemon battles still use the selected or first adjacent opponent rather than planning a whole turn across all opponents.
+Scores are estimates, not a full battle simulator. The two-turn search considers up to eight opponent replies and uses approximate damage and common effects. It does not simulate every volatile effect, possible opponent switch, hidden item, multi-Pokemon interaction, or unusual move mechanic. Damage rolls are estimated, and setup effects in the search are simplified. Multi-Pokemon battles still focus on the selected or first adjacent opponent; turn-order learning is limited to singles.
 
-The trainer snapshot contains some merged variants with more than four moves; these are labeled `assumed moves`, not treated as exact sets. Bundled move-effect metadata is extracted from the profile's Cobblemon Showdown data. Hazard state resets between battles and is learned from messages received during the current battle.
+Trainer rosters are bundled snapshots, not live server data. Matching is conservative: ambiguous teams, revealed contradictions and alternative held items stay uncertain. The older move snapshot remains a fallback; merged sets with more than four moves are labeled `assumed moves`. Bundled move metadata comes from the profile's Cobblemon Showdown data. Observed moves, field conditions and learned estimates reset between battles. Move-message attribution requires a unique matching active name; ambiguous names are not guessed. No live-game win-rate comparison has been performed.
 
 ## Build
 
@@ -41,6 +49,6 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.8.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.9.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
-`build` also runs regression checks for defensive scoring, survival, speed and priority, accuracy and recoil, healing, trainer-set precedence, and field conditions. Live gameplay must still be checked in Minecraft.
+`build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.

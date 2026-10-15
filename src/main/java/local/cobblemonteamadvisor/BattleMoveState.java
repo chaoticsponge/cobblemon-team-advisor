@@ -16,6 +16,9 @@ final class BattleMoveState {
         boolean acted;
         String lastMove = "";
         final Set<String> used = new HashSet<>();
+        final Map<String, String> effects = new HashMap<>();
+        String choiceMove = "";
+        int protectTurn = -1;
     }
 
     private final Map<UUID, Entry> entries = new HashMap<>();
@@ -35,14 +38,43 @@ final class BattleMoveState {
     }
 
     void used(UUID pokemon, String move) {
+        used(pokemon, move, false);
+    }
+
+    void used(UUID pokemon, String move, boolean choiceItem) {
         Entry entry = entry(pokemon);
         entry.acted = true;
         entry.lastMove = move;
         entry.used.add(move);
+        if (!choiceItem) entry.choiceMove = "";
+        else if (entry.choiceMove.isEmpty()) entry.choiceMove = move;
     }
 
     void attempted(UUID pokemon) {
         entry(pokemon).acted = true;
+    }
+
+    int turn() { return turn; }
+    String lastMove(UUID pokemon) { return entry(pokemon).lastMove; }
+    boolean hasEffect(UUID pokemon, String effect) { return entry(pokemon).effects.containsKey(effect); }
+    String effectMove(UUID pokemon, String effect) { return entry(pokemon).effects.getOrDefault(effect, ""); }
+    boolean protectedNow(UUID pokemon) { return entry(pokemon).protectTurn == turn; }
+
+    void effect(UUID pokemon, String effect, boolean start, String move) {
+        Entry entry = entry(pokemon);
+        if (effect.equals("protect")) { entry.protectTurn = start ? turn : -1; return; }
+        if (start) entry.effects.put(effect, move == null || move.isEmpty() ? entry.lastMove : move);
+        else entry.effects.remove(effect);
+    }
+
+    String restricted(UUID pokemon, String move, boolean statusMove, boolean choiceItem) {
+        Entry entry = entry(pokemon);
+        if (statusMove && hasEffect(pokemon, "taunt")) return "Taunt prevents status moves";
+        if (move.equals(entry.effects.get("disable"))) return "move is disabled";
+        String encore = entry.effects.get("encore");
+        if (encore != null && !encore.isEmpty() && !move.equals(encore)) return "Encore locks another move";
+        if (choiceItem && !entry.choiceMove.isEmpty() && !move.equals(entry.choiceMove)) return "choice item locks another move";
+        return null;
     }
 
     String unavailable(UUID pokemon, String move, List<String> moveset, boolean complete) {

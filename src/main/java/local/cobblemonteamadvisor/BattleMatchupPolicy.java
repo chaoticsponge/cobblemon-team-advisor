@@ -51,7 +51,7 @@ final class BattleMatchupPolicy {
     static int survivalScore(double hp, double maxHp, double entryDamage, double incoming, double residual) {
         double remaining = hp - entryDamage;
         if (remaining <= 0) return -100;
-        if (remaining <= incoming + residual) return -60;
+        if (remaining <= incoming || remaining <= incoming + Math.max(0, residual)) return -60;
         return (int) Math.round(6 * remaining / maxHp
                 + 4 * Math.min(3, remaining / Math.max(1, incoming + residual)));
     }
@@ -72,6 +72,11 @@ final class BattleMatchupPolicy {
                 : hp - incoming - residual + healing > 0 ? 3 : -3;
         if (healing <= incoming + residual && hp > incoming + residual) score *= 0.4D;
         return score;
+    }
+
+    static double counterCost(double rating, double alternative, double hp, double remaining) {
+        if (rating < 2 || alternative >= rating - 1) return 0;
+        return 14 * Math.max(0, hp - Math.max(0, remaining)) / Math.max(1, hp);
     }
 
     record MoveKnowledge(List<String> names, boolean complete, String source) { }

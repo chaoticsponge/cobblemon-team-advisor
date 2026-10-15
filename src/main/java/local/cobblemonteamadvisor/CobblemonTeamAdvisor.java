@@ -199,6 +199,7 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static void autoSelectBattleAction(BattleGUI battleGUI) {
+        if (!BattleAdvisor.freshSelection(battleGUI)) return;
         long now = System.currentTimeMillis();
         if (now - lastAutoActionAt < 1200L) {
             return;
@@ -218,8 +219,11 @@ public final class CobblemonTeamAdvisor {
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
             BattleSwitchPokemonSelection.SwitchTile tile = bestSwitchTile(selection, currentOpponent(selection));
             if (tile != null) {
-                selection.mousePrimaryClicked(tile.getX() + BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH / 2.0D,
-                        tile.getY() + BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT / 2.0D);
+                if (BattleAdvisor.canSwitch(selection.getRequest(), tile.getPokemon(), tile.getShowdownPokemon())
+                        && selection.mousePrimaryClicked(tile.getX() + BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH / 2.0D,
+                        tile.getY() + BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT / 2.0D)) {
+                    BattleAdvisor.submittedSwitch(selection.getRequest(), tile.getPokemon().getUuid());
+                }
                 lastAutoActionAt = now;
             }
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleGeneralActionSelection selection) {
@@ -402,7 +406,8 @@ public final class CobblemonTeamAdvisor {
         int bestScore = Integer.MIN_VALUE;
         for (BattleSwitchPokemonSelection.SwitchTile tile : selection.getTiles()) {
             Pokemon pokemon = tile.getPokemon();
-            if (pokemon == null || tile.isFainted() || tile.isCurrentlyInBattle()) {
+            if (pokemon == null || tile.isFainted() || tile.isCurrentlyInBattle()
+                    || !BattleAdvisor.canSwitch(selection.getRequest(), pokemon, tile.getShowdownPokemon())) {
                 continue;
             }
 
@@ -420,8 +425,9 @@ public final class CobblemonTeamAdvisor {
     }
 
     static BattleMatchupPolicy.MoveKnowledge opponentMoves(ClientBattlePokemon pokemon) {
-        List<String> known = pokemon.getProperties().getMoves();
-        List<String> trainer = trainerSpecificMoves(pokemon);
+        List<String> known = BattleAdvisor.knownMoves(pokemon);
+        TrainerRoster.Member member = BattleAdvisor.trainerMember(pokemon);
+        List<String> trainer = member == null ? trainerSpecificMoves(pokemon) : member.moves();
         List<String> revealed = known == null ? List.of() : known.stream().map(CobblemonTeamAdvisor::normalizedId).toList();
         var precise = BattleMatchupPolicy.resolveMoves(revealed, trainer, List.of(), List.of());
         if (precise.complete()) return precise;
