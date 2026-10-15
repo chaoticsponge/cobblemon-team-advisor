@@ -49,6 +49,12 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.9.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.10.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
+
+### Raid HP and KO advice
+
+Raid Dens bosses are detected from their raid aspect, a matching world entity, or the Raid Dens dimension. The server does not sync their scaled shared HP total. During detected raids, the advisor suppresses KO labels and outgoing KO predictions in the survival planner, and ranks attacks by uncapped expected damage alongside survival and move effects. Shared raid damage does not train the ordinary single-battle damage estimator. It cannot promise a raid KO from a hidden HP pool.
+
+In trainer and ordinary battles, the finishing preference uses minimum normal damage, including deterministic critical-hit moves but excluding random critical hits. It rewards moves that cover the remaining HP above moves needing a high roll, while retaining accuracy, turn order, status and recoil checks. `KO` means the estimated minimum damage suffices on a hit; `KO*` indicates the move can miss. The hint gives accuracy separately. Hidden stats and abilities can still make these estimates uncertain.

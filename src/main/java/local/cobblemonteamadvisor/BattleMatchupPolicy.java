@@ -56,6 +56,17 @@ final class BattleMatchupPolicy {
                 + 4 * Math.min(3, remaining / Math.max(1, incoming + residual)));
     }
 
+    static boolean normalHitKo(double minimumDamage, double hp, boolean knownHp) {
+        return knownHp && hp > 0 && minimumDamage >= hp;
+    }
+
+    static double moveValue(double forecast, double attackScore, double damageFraction, double accuracy,
+                            boolean normalKo, boolean canFinish, boolean unknownHp) {
+        // Never truncate raid damage at an invented species-sized health pool.
+        if (unknownHp) return forecast / 20 + damageFraction * accuracy + attackScore * 0.15;
+        return forecast / 20 + attackScore * 0.15 + (normalKo && canFinish ? 8 * accuracy : 0);
+    }
+
     static double attackScore(double damageFraction, double accuracy, boolean ko, boolean firstKo,
                               double healingFraction, double recoilFraction, boolean diesBefore, boolean diesFromRecoil) {
         double score = Math.min(1.5D, damageFraction) * accuracy + (ko ? 3 * accuracy : 0)

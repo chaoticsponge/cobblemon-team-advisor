@@ -5,6 +5,21 @@ import java.util.UUID;
 
 public final class BattleMatchupPolicyTest {
     public static void main(String[] args) {
+        require(BattleMatchupPolicy.normalHitKo(120, 100, true), "Overkill on the minimum normal roll must qualify as KO");
+        require(BattleMatchupPolicy.normalHitKo(100, 100, true), "An exact minimum-damage KO must qualify");
+        require(!BattleMatchupPolicy.normalHitKo(85, 100, true), "A high roll or random crit must not turn 85 minimum damage into a guaranteed KO");
+        require(!BattleMatchupPolicy.normalHitKo(240, 100, false), "Hidden raid HP must never produce a species-HP KO label");
+        require(!BattleMatchupPolicy.normalHitKo(120, 0, true), "A fainted opponent is not a new KO opportunity");
+        double safeFinish = BattleMatchupPolicy.moveValue(70, 4, 1.2, 1, true, true, false);
+        double rollFinish = BattleMatchupPolicy.moveValue(100, 1, 0.95, 1, false, true, false);
+        require(safeFinish > rollFinish, "Trainer minimum-damage KOs must beat optimistic planner roll KOs");
+        require(safeFinish > BattleMatchupPolicy.moveValue(70, 4, 2.4, 0.5, true, true, false),
+                "A KO on hit with 50% accuracy must remain less reliable than a certain hit KO");
+        require(BattleMatchupPolicy.moveValue(0, 0, 2.4, 0.5, false, true, true)
+                        > BattleMatchupPolicy.moveValue(0, 0, 0.85, 1, false, true, true),
+                "Unknown raid HP must preserve expected overkill damage instead of capping both attacks at a false KO");
+        require(BattleMatchupPolicy.moveValue(0, 0, 1.2, 1, true, false, false) == 0,
+                "A Pokemon that cannot act must not receive a finishing bonus");
         int neutralAttacker = score(4.0D, 1.0D);
         require(score(0.5D, 0.5D) > neutralAttacker, "Resistance must outweigh stronger offence");
         require(score(0.5D, 0.0D) > score(4.0D, 0.5D), "Immunity must beat resistance with stronger offence");

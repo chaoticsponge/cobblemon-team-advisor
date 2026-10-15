@@ -50,6 +50,7 @@ public final class BattleAdvisor {
     private static final Map<String, BattlePlanner.Plan> PLAN_CACHE = new HashMap<>();
     private static final Map<UUID, Set<String>> SEEN_TEAMS = new HashMap<>();
     private static final Map<UUID, String> FAINTED = new HashMap<>();
+    private static final Map<UUID, Boolean> RAID_CACHE = new HashMap<>();
     private static final Map<UUID, Float> HEALTH = new HashMap<>();
     private static final Map<UUID, Set<String>> OBSERVED_MOVES = new HashMap<>();
     private static BattleObservations observations = new BattleObservations();
@@ -70,6 +71,7 @@ public final class BattleAdvisor {
     static void syncBattle() {
         // Reuse identical decisions within a tick; packets also invalidate the caches.
         MOVE_CACHE.clear();
+        RAID_CACHE.clear();
         MATCHUP_CACHE.clear();
         MEMBER_CACHE.clear();
         ROSTER_CACHE.clear();
@@ -246,7 +248,7 @@ public final class BattleAdvisor {
             firstMove = new SeenMove(user.getUuid(), priority, context);
         }
         if (damaging(move) && user.getActor().getSide() != target.getActor().getSide()) {
-            boolean clean = !effects(move).has("multihit") && !moveState.hasEffect(target.getUuid(), "substitute")
+            boolean clean = !unknownRaidHp(defender) && !effects(move).has("multihit") && !moveState.hasEffect(target.getUuid(), "substitute")
                     && !moveState.protectedNow(target.getUuid()) && !(defender.hp >= defender.maxHp
                     && (defender.item.endsWith("focussash") || defender.ability.equals("sturdy")));
             pendingHit = new PendingHit(target.getUuid(), hpFraction(target),
@@ -357,7 +359,12 @@ public final class BattleAdvisor {
     }
 
     record Matchup(int score, boolean survives, double incoming, double entry, String reason) { }
-    record MoveAdvice(double score, boolean ko, boolean firstKo, String reason) { }
+    record MoveAdvice(double score, boolean ko, boolean firstKo, String reason, double accuracy) {
+        MoveAdvice(double score, boolean ko, boolean firstKo, String reason) {
+            this(score, ko, firstKo, reason, 1);
+        }
+        String koLabel() { return ko ? accuracy >= 1 ? "KO" : "KO*" : ""; }
+    }
     private record Fighter(Pokemon own, ClientBattlePokemon live, List<ElementalType> types, String ability,
                            String item, String status, double hp, double maxHp, boolean allied, boolean entering) {
         int stage(Stats stat) {
@@ -534,6 +541,28 @@ public final class BattleAdvisor {
         return damaging ? worst : 1;
     }
 
+    private static boolean raid(ClientBattlePokemon pokemon) {
+        return RAID_CACHE.computeIfAbsent(pokemon.getUuid(), ignored -> {
+            if (pokemon.getProperties().getAspects().contains("raid")) return true;
+            var level = Minecraft.getInstance().level;
+            if (level == null) return false;
+            var dimension = level.dimension().location();
+            if (dimension.getNamespace().equals("cobblemonraiddens") && dimension.getPath().contains("raid")) return true;
+            for (var entity : level.entitiesForRendering()) {
+                if (entity instanceof com.cobblemon.mod.common.entity.pokemon.PokemonEntity live
+                        && live.getPokemon().getUuid().equals(pokemon.getUuid())) {
+                    return live.getPokemon().getAspects().contains("raid");
+                }
+            }
+            return false;
+        });
+    }
+
+    private static boolean unknownRaidHp(Fighter fighter) {
+        // Raid Dens syncs a shared health fraction, not the server's scaled maximum HP.
+        return !fighter.allied && fighter.live != null && raid(fighter.live);
+    }
+
     private static Fighter enemy(ClientBattlePokemon pokemon) {
         var form = pokemon.getSpecies().getForm(pokemon.getProperties().getAspects());
         List<ElementalType> types = new ArrayList<>();
@@ -647,6 +676,7 @@ public final class BattleAdvisor {
 
     private static double moveAccuracy(Fighter user, Fighter target, MoveTemplate move) {
         String name = id(move.getName());
+        if (user.ability.equals("noguard") || target.ability.equals("noguard")) return 1;
         if ((name.equals("thunder") || name.equals("hurricane")) && field.weather.equals("raindance")) return 1;
         if (name.equals("blizzard") && (field.weather.equals("hail") || field.weather.equals("snow"))) return 1;
         double accuracy = (name.equals("thunder") || name.equals("hurricane")) && field.weather.equals("sunnyday") ? 50 : move.getAccuracy();
@@ -681,9 +711,9 @@ public final class BattleAdvisor {
         double recoil = user.ability.equals("rockhead") || user.ability.equals("magicguard") ? 0 : fraction(effect, "recoil");
         if (effect.has("selfdestruct")) recoil = user.hp / Math.max(1, target.hp);
         BattlePlanner.Effect modeled = new BattlePlanner.Effect(heal, fraction(effect, "drain"), recoil, attack, defence, speed,
-                extraResidual, status, Set.of("protect", "detect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark").contains(name),
+                unknownRaidHp(target) ? 0 : extraResidual, status, Set.of("protect", "detect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark").contains(name),
                 name.equals("substitute"), name.equals("rest") ? "slp" : "");
-        return new BattlePlanner.Action(name, damage(user, target, move, type, 0.925D), moveAccuracy(user, target, move),
+        return new BattlePlanner.Action(name, unknownRaidHp(target) ? 0 : damage(user, target, move, type, 0.925D), moveAccuracy(user, target, move),
                 priority(user, move), pp, modeled, Set.of("firstimpression", "fakeout", "matblock").contains(name),
                 Set.of("gigatonhammer", "bloodmoon").contains(name), move.getDamageCategory() == DamageCategories.INSTANCE.getPHYSICAL(),
                 user.ability.equals("infiltrator") || effect.has("sound"), effect.has("recharge"), charging(user, move));
@@ -716,7 +746,7 @@ public final class BattleAdvisor {
         BattlePlanner.Combatant mine = new BattlePlanner.Combatant(own.hp - (switching ? entryDamage(own) : 0), own.maxHp, mySpeed,
                 residual(own), own.entering ? 0 : moveState.hasEffect(own.uuid(), "substitute") ? own.maxHp / 4 : 0, own.status, actions, own.entering ? "" : moveState.lastMove(own.uuid()),
                 own.entering ? "" : moveState.effectMove(own.uuid(), "charging"));
-        BattlePlanner.Combatant enemy = new BattlePlanner.Combatant(foe.hp, foe.maxHp, theirSpeed, residual(foe),
+        BattlePlanner.Combatant enemy = new BattlePlanner.Combatant(foe.hp, foe.maxHp, theirSpeed, unknownRaidHp(foe) ? 0 : residual(foe),
                 enemySubstitute ? foe.maxHp / 4 : 0, foe.status, actions(foe, own, null), moveState.lastMove(foe.uuid()),
                 moveState.effectMove(foe.uuid(), "charging"));
         BattlePlanner.Plan result = BattlePlanner.evaluate(mine, enemy, first, switching, field.trickRoom);
@@ -811,10 +841,12 @@ public final class BattleAdvisor {
         }
         double damage = damage(own, foe, move, tile.getElementalType(), 0.925D);
         double minimum = damage(own, foe, move, tile.getElementalType(), 0.85D);
-        boolean ko = minimum >= foe.hp && foe.hp > 0
-                && !moveState.protectedNow(foe.uuid()) && (!charging(own, move) || moveState.hasEffect(own.uuid(), "charging"))
+        boolean unknownHp = unknownRaidHp(foe);
+        boolean canHitNow = !moveState.protectedNow(foe.uuid())
+                && (!charging(own, move) || moveState.hasEffect(own.uuid(), "charging"))
                 && (!moveState.hasEffect(foe.uuid(), "substitute") || own.ability.equals("infiltrator") || effects(move).has("sound"));
-        boolean firstKo = ko && accuracy >= 0.99D && first && !own.status.equals("slp") && !own.status.equals("frz") && !own.status.equals("par");
+        boolean ko = canHitNow && BattleMatchupPolicy.normalHitKo(minimum, foe.hp, !unknownHp);
+        boolean firstKo = ko && accuracy >= 1 && first && !own.status.equals("slp") && !own.status.equals("frz") && !own.status.equals("par");
         JsonObject effect = effects(move);
         double recoil = Math.min(foe.hp, damage) * fraction(effect, "recoil");
         if (own.ability.equals("rockhead") || own.ability.equals("magicguard")) recoil = 0;
@@ -827,12 +859,19 @@ public final class BattleAdvisor {
                 drain / own.maxHp, recoil / own.maxHp, before >= own.hp, recoil >= own.hp);
         if ((id(move.getName()).equals("rapidspin") || id(move.getName()).equals("mortalspin"))
                 && damage > 0 && hasHazards()) score += 0.8D;
-        String reason = firstKo ? "estimated KO before enemy moves" : ko ? "estimated KO; check turn order / accuracy"
-                : "expected damage " + Math.round(100 * damage / foe.maxHp * accuracy) + "%";
+        String reason = ko ? "minimum normal hit KOs; " + Math.round(accuracy * 100) + "% accuracy"
+                : unknownHp ? "raid HP unknown; ranked by expected damage"
+                : canHitNow && damage(own, foe, move, tile.getElementalType(), 1) >= foe.hp
+                    ? "KO needs a high damage roll; " + Math.round(accuracy * 100) + "% accuracy"
+                    : "expected damage " + Math.round(100 * damage / foe.maxHp * accuracy) + "%";
+        if (firstKo) reason += "; before enemy moves";
         if (recoil > 0) reason += "; recoil " + Math.round(100 * recoil / own.maxHp) + "%";
         if (drain > 0) reason += "; heals " + Math.round(100 * drain / own.maxHp) + "%";
-        if (!forecast.next().isEmpty()) reason += "; then " + forecast.next();
-        return new MoveAdvice(forecast.value() / 20 + score * 0.15, ko, firstKo, reason);
+        if (!unknownHp && !forecast.next().isEmpty()) reason += "; then " + forecast.next();
+        boolean canFinish = before < own.hp && recoil < own.hp && !own.status.equals("slp") && !own.status.equals("frz");
+        double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damage / Math.max(1, foe.maxHp),
+                accuracy * (own.status.equals("par") ? 0.75 : 1), ko, canFinish, unknownHp);
+        return new MoveAdvice(value, ko, firstKo, reason, accuracy);
     }
 
     private static MoveAdvice utility(Fighter own, Fighter foe, MoveTemplate move, double accuracy, double incoming, double before) {
@@ -1134,14 +1173,14 @@ public final class BattleAdvisor {
                     + " — " + moveAdvice(recommended).reason();
             if (selection.getMoveSet().getTrapped()) hint += "; trapped";
         }
-        hint(graphics, hint, CobblemonTeamAdvisor.opponentMoves(opponent).source() + "; damage / speed are estimates");
+        hint(graphics, hint, (raid(opponent) ? "Raid: boss HP unknown" : CobblemonTeamAdvisor.opponentMoves(opponent).source()) + "; damage / speed are estimates");
     }
 
     static void renderSwitchHint(GuiGraphics graphics, BattleSwitchPokemonSelection.SwitchTile tile, ClientBattlePokemon opponent) {
         if (tile == null || opponent == null) return;
         hint(graphics, "Best switch: " + tile.getPokemon().getDisplayName(false).getString() + " — "
                 + matchup(tile.getPokemon(), tile.getShowdownPokemon(), opponent, false).reason(),
-                CobblemonTeamAdvisor.opponentMoves(opponent).source() + "; damage / speed are estimates");
+                (raid(opponent) ? "Raid: boss HP unknown" : CobblemonTeamAdvisor.opponentMoves(opponent).source()) + "; damage / speed are estimates");
     }
 
     private static void hint(GuiGraphics graphics, String first, String second) {

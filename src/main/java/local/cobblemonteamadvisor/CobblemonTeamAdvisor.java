@@ -158,7 +158,7 @@ public final class CobblemonTeamAdvisor {
             }
 
             if (likelyKos(tile)) {
-                String text = "KO";
+                String text = BattleAdvisor.moveAdvice(tile).koLabel();
                 int x = Math.round(tile.getX()) + BattleMoveSelection.MOVE_WIDTH - minecraft.font.width(text) - 5;
                 int y = Math.round(tile.getY()) + 3;
                 graphics.drawString(minecraft.font, text, x, y, 0xFFFFE066, true);
