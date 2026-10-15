@@ -640,7 +640,7 @@ public final class BattleAdvisor {
         return damaging ? worst : 1;
     }
 
-    private static boolean raid(ClientBattlePokemon pokemon) {
+    static boolean raid(ClientBattlePokemon pokemon) {
         return RAID_CACHE.computeIfAbsent(pokemon.getUuid(), ignored -> {
             if (pokemon.getState().getCurrentAspects().contains("raid")) return true;
             var level = Minecraft.getInstance().level;
@@ -975,6 +975,42 @@ public final class BattleAdvisor {
                 "opponent", opponent == null ? "unknown" : opponent.getUuid().toString(), "move", tile.getMoveTemplate().getName(),
                 "advice", moveAdvice(tile), "options", tile.getMoveSelection().getMoveTiles().stream().filter(option -> option.getSelectable())
                         .map(option -> Map.of("move", option.getMoveTemplate().getName(), "pp", option.getMove().getPp(), "advice", moveAdvice(option))).toList()));
+    }
+
+    record MedicineState(double hp, double maxHp, String status) { }
+
+    static MedicineState medicineState(BattleMoveSelection selection) {
+        Pokemon pokemon = CobblemonTeamAdvisor.activePokemon(selection);
+        if (pokemon == null) return null;
+        Fighter own = mine(pokemon, null, true);
+        return new MedicineState(own.hp, own.maxHp, own.status);
+    }
+
+    static double medicineGain(BattleMoveSelection selection, double heal, boolean cures) {
+        Pokemon pokemon = CobblemonTeamAdvisor.activePokemon(selection);
+        ClientBattlePokemon opponent = CobblemonTeamAdvisor.currentOpponent(selection);
+        if (pokemon == null || opponent == null) return Double.NEGATIVE_INFINITY;
+        Fighter own = mine(pokemon, null, true), foe = enemy(opponent);
+        if (own.hp <= 0 || heal <= 0 && (!cures || own.status.isEmpty())) return Double.NEGATIVE_INFINITY;
+        double baseline = -Double.MAX_VALUE;
+        for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && available(own, tile.getMoveTemplate())) {
+            MoveAdvice advice = moveAdvice(tile);
+            if (advice.firstKo() || advice.safeKo()) return Double.NEGATIVE_INFINITY;
+            baseline = Math.max(baseline, movePlan(tile, own, foe).value());
+        }
+        for (Pokemon candidate : party()) {
+            ShowdownPokemon snapshot = selection.getRequest().getSide().getPokemon().stream()
+                    .filter(member -> member.getUuid().equals(candidate.getUuid())).findFirst().orElse(null);
+            if (!canSwitch(selection.getRequest(), candidate, snapshot) || !viableSwitch(candidate, snapshot, opponent)) continue;
+            Fighter replacement = mine(candidate, snapshot, false);
+            baseline = Math.max(baseline, switchPlan(candidate, snapshot, opponent).value()
+                    + BattleSwitchPolicy.healthAdjustment(own.hp / own.maxHp, replacement.hp / replacement.maxHp) - 10);
+        }
+        Fighter treated = cures ? new Fighter(own.own, own.live, own.types, own.ability, own.item, "", own.hp, own.maxHp, true, false) : own;
+        var effect = new BattlePlanner.Effect(Math.min(heal, own.maxHp - own.hp), 0, 0, 1, 1, 1, 0, "", false, false);
+        var item = new BattlePlanner.Action("item:medicine", 0, 1, 10, 1, effect, false, false, false);
+        var forecast = plan(treated, foe, actions(treated, foe, selection), item, false);
+        return forecast.survives() && !forecast.next().isEmpty() ? forecast.value() - baseline : Double.NEGATIVE_INFINITY;
     }
 
     static MoveAdvice moveAdvice(BattleMoveSelection.MoveTile tile) {
@@ -1377,6 +1413,8 @@ public final class BattleAdvisor {
     private static boolean damaging(MoveTemplate move) {
         return move.getDamageCategory() != DamageCategories.INSTANCE.getSTATUS();
     }
+
+    static Set<String> moveFlags(MoveTemplate move) { return effects(move).keySet(); }
 
     private static JsonObject effects(MoveTemplate move) {
         JsonElement effect = EFFECTS.get(id(move.getName()));

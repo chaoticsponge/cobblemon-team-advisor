@@ -4,7 +4,9 @@ import java.util.Set;
 
 /** Shared move and ability modifiers for either side of every battle. */
 final class BattleDamageModifiers {
-    record User(String ability, String item, String status, double hpFraction, String weather) { }
+    record User(String ability, String item, String status, double hpFraction, String weather) {
+        User { if (item.equals("air") || item.equals("minecraftair")) item = ""; }
+    }
     record Move(String id, String type, String originalType, double power, boolean special, Set<String> flags) {
         boolean has(String flag) { return flags.contains(flag); }
     }

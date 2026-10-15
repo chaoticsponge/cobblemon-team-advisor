@@ -11,6 +11,7 @@ final class BattleDamageTest {
     static void run() {
         var neutral = user("", "", "", 1);
         var acrobatics = move("acrobatics", "flying", 55, false, "contact");
+        check(BattleDamageModifiers.power(user("", "air", "", 1), neutral, acrobatics) == 110, "An empty Minecraft item stack must count as no held item");
         check(BattleDamageModifiers.power(neutral, neutral, acrobatics) == 110, "Item-free Acrobatics must double its base power");
         check(BattleDamageModifiers.power(user("", "aguavberry", "", 1), neutral, acrobatics) == 55, "Holding a berry must prevent the Acrobatics boost");
         check(BattleDamageModifiers.power(user("", "", "", 0.03), neutral, move("flail", "normal", 0, false)) == 200,

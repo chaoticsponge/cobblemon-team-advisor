@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.15.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.16.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -120,3 +120,19 @@ Diagnostics only use already-received client data, record no ordinary chat, and 
 ### Trainer label rendering fix
 
 Trainer predictions render after the living entity, independently of the normal name-tag event, with Minecraft's nameplate orientation and attachment position. RCT trainers are identified by their registered `rctmod:trainer` entity type; their already-synced IDs are read from the loaded entity rather than an eagerly resolved optional-mod class. Computed labels are recorded at DEBUG level, and identity-read failures produce one warning per entity class. The range, local-only data use and prediction model are unchanged.
+
+### Rare encounters, optimized loadouts and medicine
+
+AUTO pauses before selecting an action against a shiny, legendary/mythical/Ultra Beast or uncaught wild species. It uses the existing client Pokédex record and visible battle data. Missing wild Pokémon details defer automation until they arrive. A brief action-bar notice identifies the reason; explicitly switching AUTO back on approves the paused encounter. Newly encountered wild Pokémon are checked separately. Trainer-owned Pokémon are unaffected, and detected raid bosses remain eligible for AUTO because their capture phase requires defeating them first.
+
+Opening a PC adds a `Loadouts` button. `Create loadout` generates a general-purpose balanced team from synchronized party/PC Pokémon under the editable level cap. Repeated creates prefer alternative teams when available. The search combines current moves, normal full-health offensive estimates, STAB/common ability and item modifiers, offensive coverage, defensive weaknesses/resistances/immunities, speed, bulk and physical/special balance. It favors distinct species and fills additional slots from owned duplicates only if necessary. This is a bounded heuristic, not an exhaustive team solver; variable moves and conditional effects remain approximate, and it does not learn or change moves.
+
+Drafts do not change the party. `Save` stores a named local loadout, and `Apply` assembles the selected draft or saved team through normal Cobblemon PC move/swap packets. Each move waits for the synchronized result before the next move; missing Pokémon, rejected/unconfirmed swaps or full boxes stop application. Leaving the screen stops further moves, although an already-submitted move may finish. A collection with fewer eligible Pokémon produces a smaller team. Saved loadouts live under `optimized-loadouts/<pc-uuid>.json`, separately from Party Extras' server presets. Corrupt saves are preserved, and no existing preset is overwritten.
+
+With AUTO enabled, the advisor can use Cobblemon potions and persistent-status cures from the main inventory or hotbar on the active Pokémon. It compares the estimated item turn plus follow-up against attacks and useful switches, keeps reliable immediate KOs, and requires the treated Pokémon to survive the modeled sequence with a clear improvement. Medicine consumes a turn. Revives, stat boosters, food/berry healing and arbitrary modded medicines are not automated. Item amounts use the locally available mechanics, so server-specific changes can affect estimates.
+
+Item use goes through ordinary held-item interaction and the server's own enabled-target selection callback; server inventory, target and battle restrictions still apply. Inventory medicine is temporarily swapped into the selected hotbar slot, then restored if the expected inventory state remains. Denied or unconfirmed use stops further automatic item attempts for that battle, and the same decision request is not retried. Requests, target selections and results appear in battle traces. Calculations and saved drafts are local; applying teams and using items necessarily send normal gameplay requests.
+
+### Unfocused AUTO battles
+
+When Dynamic FPS is installed, the advisor temporarily raises its frame target to at least 30 FPS while AUTO is enabled in a battle. The installed Dynamic FPS version uses that target to skip low-rate rendering; restoring normal battle rendering also keeps GUI/decision processing responsive while unfocused. No Dynamic FPS settings file is changed. Its usual throttling resumes when AUTO stops or the battle ends. OS suspension, network/server lag and other throttling mods are outside this compatibility fix. Build/regression checks pass; the new screen, native medicine interaction, PC application and background behavior still require live gameplay validation after restarting.

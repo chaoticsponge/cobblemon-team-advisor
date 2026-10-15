@@ -77,9 +77,17 @@ public final class CobblemonTeamAdvisor {
         }
         wasPcOpen = pcOpen;
 
+        if (BattleMedicine.tick(autoFightEnabled)) return;
         if (autoFightEnabled && minecraft.screen instanceof BattleGUI battleGUI) {
             autoSelectBattleAction(battleGUI);
         }
+    }
+
+    @SubscribeEvent
+    public static void onPcInitialized(ScreenEvent.Init.Post event) {
+        if (event.getScreen() instanceof PCGUI pc) event.addListener(net.minecraft.client.gui.components.Button
+                .builder(Component.literal("Loadouts"), button -> Minecraft.getInstance().setScreen(new LoadoutScreen(pc)))
+                .bounds(Math.max(4, pc.width - 104), 6, 98, 20).build());
     }
 
     @SubscribeEvent
@@ -116,6 +124,7 @@ public final class CobblemonTeamAdvisor {
         }
 
         autoFightEnabled = !autoFightEnabled;
+        if (autoFightEnabled) RareEncounterGuard.allowPausedEncounter();
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player != null) {
             minecraft.player.displayClientMessage(Component.literal("Auto fight " + (autoFightEnabled ? "enabled" : "disabled")), true);
@@ -205,7 +214,13 @@ public final class CobblemonTeamAdvisor {
         graphics.renderOutline(x, y, width, height, 0xFF5BFF73);
     }
 
+    public static boolean keepBattleResponsive() {
+        return autoFightEnabled && com.cobblemon.mod.common.client.CobblemonClient.INSTANCE.getBattle() != null;
+    }
+
     private static void autoSelectBattleAction(BattleGUI battleGUI) {
+        int protection = RareEncounterGuard.check();
+        if (protection != 0) { if (protection == 2) autoFightEnabled = false; return; }
         if (!BattleAdvisor.freshSelection(battleGUI)) return;
         long now = System.currentTimeMillis();
         if (now - lastAutoActionAt < 1200L) {
@@ -213,6 +228,7 @@ public final class CobblemonTeamAdvisor {
         }
 
         if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
+            if (BattleMedicine.tryUse(battleGUI, selection)) { lastAutoActionAt = now; return; }
             if (openAutoSwitchIfNeeded(battleGUI, selection)) {
                 lastAutoActionAt = now;
                 return;

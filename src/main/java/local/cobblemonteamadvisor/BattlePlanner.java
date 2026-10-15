@@ -144,7 +144,7 @@ final class BattlePlanner {
     }
 
     private static void act(State user, State target, Combatant own, Combatant foe, Action action) {
-        if (user.hp <= 0 || target.hp <= 0 || user.status.equals("slp") || user.status.equals("frz")) return;
+        if (user.hp <= 0 || target.hp <= 0 || !action.id.startsWith("item:") && (user.status.equals("slp") || user.status.equals("frz"))) return;
         if (action.charging && !user.charged.equals(action.id)) { user.charged = action.id; user.last = action.id; return; }
         user.charged = "";
         if (!action.id.equals("pass") && !action.id.equals("switch") && action.accuracy > 0) user.acted = true;
