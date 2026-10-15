@@ -40,6 +40,30 @@ final class TrainerRoster {
         return matches.size() == 1 ? matches.getFirst() : List.of();
     }
 
+    static List<Member> preview(String trainer, String trainerId) {
+        if (trainerId != null && !trainerId.isBlank()) {
+            Identity identity = IDENTIFIED.get(trainerId.replaceFirst("^rctmod:", ""));
+            if (identity != null) return ROSTERS.get(identity.name).get(identity.index);
+            // A synced ID with no bundled match must not fall back to a different trainer.
+            return List.of();
+        }
+        List<List<Member>> teams = ROSTERS.get(normalize(trainer));
+        return teams != null && teams.size() == 1 ? teams.getFirst() : List.of();
+    }
+
+    private record Identity(String name, int index) { }
+    private static final Map<String, Identity> IDENTIFIED = loadIdentified();
+
+    private static Map<String, Identity> loadIdentified() {
+        try (var input = TrainerRoster.class.getResourceAsStream("/trainer-roster-ids.json")) {
+            if (input == null) throw new IllegalStateException("Missing trainer identities");
+            return new Gson().fromJson(new InputStreamReader(input, StandardCharsets.UTF_8),
+                    new TypeToken<Map<String, Identity>>() { }.getType());
+        } catch (java.io.IOException error) {
+            throw new IllegalStateException("Cannot load trainer identities", error);
+        }
+    }
+
     private static String normalize(String value) {
         return value.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]", "");
     }

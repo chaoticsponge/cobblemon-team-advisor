@@ -69,6 +69,7 @@ public final class CobblemonTeamAdvisor {
     public static void onClientTick(ClientTickEvent.Post event) {
         BattleAdvisor.syncBattle();
         PokedexScanAdvisor.tick();
+        TrainerWinPreview.tick();
         Minecraft minecraft = Minecraft.getInstance();
         boolean pcOpen = minecraft.screen instanceof PCGUI;
         if (pcOpen && !wasPcOpen) {
@@ -79,6 +80,11 @@ public final class CobblemonTeamAdvisor {
         if (autoFightEnabled && minecraft.screen instanceof BattleGUI battleGUI) {
             autoSelectBattleAction(battleGUI);
         }
+    }
+
+    @SubscribeEvent
+    public static void onTrainerName(net.neoforged.neoforge.client.event.RenderNameTagEvent event) {
+        TrainerWinPreview.render(event);
     }
 
     @SubscribeEvent

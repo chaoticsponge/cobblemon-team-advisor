@@ -459,6 +459,56 @@ public final class BattleAdvisor {
                 Math.max(0, Math.min(max, hp)), max, true, !active);
     }
 
+    static TrainerWinEstimator.Model previewModel(List<Pokemon> own, List<Pokemon> foes, int lead) {
+        // The preview is only built outside battles, after syncBattle has cleared field state.
+        if (CobblemonClient.INSTANCE.getBattle() != null) throw new IllegalStateException("Preview during battle");
+        List<Pokemon> all = new ArrayList<>(own);
+        all.addAll(foes);
+        List<Fighter> fighters = new ArrayList<>();
+        List<TrainerWinEstimator.Fighter> models = new ArrayList<>();
+        for (int i = 0; i < all.size(); i++) {
+            Pokemon pokemon = all.get(i);
+            List<ElementalType> types = new ArrayList<>();
+            pokemon.getTypes().forEach(types::add);
+            String status = pokemon.getStatus() == null || pokemon.getStatus().getStatus() == null
+                    ? "" : pokemon.getStatus().getStatus().getShowdownName();
+            Fighter fighter = new Fighter(pokemon, null, types, id(pokemon.getAbility().getName()),
+                    id(BuiltInRegistries.ITEM.getKey(pokemon.getHeldItem$common().getItem()).getPath()), status,
+                    pokemon.getCurrentHealth(), Math.max(1, pokemon.getMaxHealth()), i < own.size(), true);
+            fighters.add(fighter);
+            models.add(new TrainerWinEstimator.Fighter(fighter.hp, fighter.maxHp, fighter.stat(Stats.SPEED),
+                    residual(fighter), status, fighter.item.endsWith("choiceband") || fighter.item.endsWith("choicespecs") || fighter.item.endsWith("choicescarf")));
+        }
+        @SuppressWarnings("unchecked")
+        List<TrainerWinEstimator.Attack>[][] attacks = new List[all.size()][all.size()];
+        double[] fractions = {1, 0.75, 0.5, 0.25, 0.05};
+        for (int i = 0; i < all.size(); i++) for (int j = 0; j < all.size(); j++) {
+            if ((i < own.size()) == (j < own.size())) continue;
+            Fighter user = fighters.get(i), target = fighters.get(j);
+            List<TrainerWinEstimator.Attack> moves = new ArrayList<>();
+            for (Move move : all.get(i).getMoveSet()) {
+                if (move == null) continue;
+                MoveTemplate template = move.getTemplate();
+                ElementalType type = template.getEffectiveElementalType(all.get(i));
+                double[] damage = new double[25];
+                JsonElement multi = effects(template).get("multihit");
+                int hits = multi != null && multi.isJsonArray() ? user.ability.equals("skilllink")
+                        ? multi.getAsJsonArray().get(1).getAsInt() : user.item.endsWith("loadeddice") ? 4 : 3 : 0;
+                for (int a = 0; a < fractions.length; a++) for (int b = 0; b < fractions.length; b++) {
+                    damage[a * 5 + b] = rawDamage(previewHealth(user, fractions[a]), previewHealth(target, fractions[b]), template, type, 1, hits);
+                }
+                moves.add(new TrainerWinEstimator.Attack(action(user, target, template, type, move.getCurrentPp()), damage));
+            }
+            attacks[i][j] = List.copyOf(moves);
+        }
+        return new TrainerWinEstimator.Model(List.copyOf(models), own.size(), attacks, lead);
+    }
+
+    private static Fighter previewHealth(Fighter fighter, double fraction) {
+        return new Fighter(fighter.own, null, fighter.types, fighter.ability, fighter.item, fighter.status,
+                fighter.maxHp * fraction, fighter.maxHp, fighter.allied, true);
+    }
+
     private static String memberKey(ClientBattlePokemon pokemon) {
         return id(pokemon.getSpecies().getName()) + ":" + pokemon.getLevel();
     }

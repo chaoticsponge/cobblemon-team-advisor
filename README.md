@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.13.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.14.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -96,3 +96,13 @@ The health contribution includes current HP, HP left after entry/incoming damage
 `trainer-battle-stats.csv` in the Minecraft profile directory contains `mod_version,trainer_name,number_of_battles,win_rate`. Each version/trainer pair has its own row. A completed trainer battle counts when AUTO submitted at least one move or switch; mixed manual/AUTO battles count too. Manual-only battles, wild battles, raids represented as wild Pokémon, PvP, spectating, fleeing, disconnects and unrecognized outcomes are excluded. Results use the client's existing translated victory messages, with exact side-name matching; no extra server requests are made.
 
 The CSV refreshes after each recognized win or loss. `trainer-battle-stats.json` stores exact integer wins and battle counts across restarts and upgrades; keep both files, and do not edit the CSV to change totals. Statistics begin with this release; earlier battles cannot be reconstructed. Comparisons reflect your local party, trainer mix and use of AUTO, not a controlled benchmark.
+
+### Trainer overhead win estimates
+
+Recognized nearby trainers display a second nameplate line such as `Est. win: ~72%` within 24 blocks, outside battle. Radical Cobblemon Trainers IDs already synchronized to the client select an exact bundled roster, including trainers who share names; other Cobblemon NPCs require a unique exact-name match. The bundled ID index covers 1,559 trainer definitions from RCT 0.18.1-beta. Unknown RCT teams show `team unknown`. No extra server requests are sent.
+
+The preview runs 128 bounded singles trials against the full trainer team. It starts with your selected party member and uses current party HP, stats, abilities, items, status, moves and PP, with trainer levels, moves, IVs/EVs and known held items from the roster snapshot. It shares the advisor's damage calculations, including STAB, type interactions and common ability/item modifiers. Trials sample accuracy, ordinary damage rolls and speed ties, carry HP and PP across opponents, choose replacements, and allow emergency switches that spend a turn. Opener restrictions, consecutive-use cooldowns, choice locks, charging, recharge, healing, draining, recoil and existing damaging status are modeled.
+
+This is an uncalibrated model estimate, separate from the measured win-rate CSV. It simplifies opponent decisions, HP-dependent damage into five HP bands, multi-hit counts, and switching. It does not simulate trainer bag items, random critical hits, setup/status strategies, all passive effects, weather/terrain changes, hazards, gimmicks, doubles or custom server changes. Percentages never claim a guaranteed 0% or 100%; unresolved trials produce a range or `uncertain`. A bundled team may differ from a server's configuration.
+
+Preview results refresh after party changes and are cached. At most one new trainer is evaluated per half-second; simulations never run in the render callback. Labels use normal depth-tested rendering and respect the hidden HUD and invisible entities. Restart Minecraft after installing the updated jar.
