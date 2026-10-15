@@ -40,6 +40,7 @@ public final class BattleAdvisor {
     private record MatchupKey(UUID pokemon, UUID opponent, boolean active, String condition) { }
     private static UUID battleId;
     private static BattleFieldState field = new BattleFieldState();
+    private static BattleMoveState moveState = new BattleMoveState();
 
     private BattleAdvisor() { }
 
@@ -52,6 +53,7 @@ public final class BattleAdvisor {
         if (!java.util.Objects.equals(id, battleId)) {
             battleId = id;
             field = new BattleFieldState();
+            moveState = new BattleMoveState();
         }
     }
 
@@ -61,9 +63,61 @@ public final class BattleAdvisor {
         for (Component message : messages) observe(message);
     }
 
+    public static void observeEntry(UUID pokemon) {
+        syncBattle();
+        if (battleId != null) moveState.enter(pokemon);
+    }
+
+    private static List<ClientBattlePokemon> activePokemon() {
+        ClientBattle battle = CobblemonClient.INSTANCE.getBattle();
+        List<ClientBattlePokemon> result = new ArrayList<>();
+        if (battle != null) {
+            for (var side : battle.getSides()) for (var actor : side.getActors()) for (var active : actor.getActivePokemon()) {
+                if (active.hasPokemon()) result.add(active.getBattlePokemon());
+            }
+        }
+        return result;
+    }
+
+    private static void observeMoveMessage(TranslatableContents translation) {
+        Object[] args = translation.getArgs();
+        if (translation.getKey().equals("cobblemon.battle.turn") && args.length > 0) {
+            String number = args[0] instanceof Component component ? component.getString() : args[0].toString();
+            try {
+                moveState.startTurn(Integer.parseInt(number), activePokemon().stream().map(ClientBattlePokemon::getUuid).toList());
+            } catch (NumberFormatException ignored) { /* Ignore unrelated or malformed turn text. */ }
+        }
+        boolean used = translation.getKey().equals("cobblemon.battle.used_move") || translation.getKey().equals("cobblemon.battle.used_move_on");
+        boolean prevented = translation.getKey().startsWith("cobblemon.battle.cant.");
+        if ((used || prevented) && args.length > 0 && args[0] instanceof Component source) {
+            List<ClientBattlePokemon> matches = activePokemon().stream()
+                    .filter(pokemon -> pokemon.getDisplayName().getString().equals(source.getString())).toList();
+            if (matches.size() == 1) {
+                if (prevented) moveState.attempted(matches.getFirst().getUuid());
+                if (used && args.length > 1 && args[1] instanceof Component move) {
+                    String name = translatedMoveId(move);
+                    if (name != null) moveState.used(matches.getFirst().getUuid(), name);
+                }
+            }
+        }
+    }
+
+    private static String translatedMoveId(Component component) {
+        if (component.getContents() instanceof TranslatableContents translation && translation.getKey().startsWith("cobblemon.move.")) {
+            String name = translation.getKey().substring("cobblemon.move.".length());
+            if (!name.contains(".")) return id(name);
+        }
+        for (Component sibling : component.getSiblings()) {
+            String name = translatedMoveId(sibling);
+            if (name != null) return name;
+        }
+        return null;
+    }
+
     private static void observe(Component message) {
         if (message.getContents() instanceof TranslatableContents translation) {
             field.observe(translation.getKey());
+            observeMoveMessage(translation);
             for (Object argument : translation.getArgs()) {
                 if (argument instanceof Component component) observe(component);
             }
@@ -170,7 +224,9 @@ public final class BattleAdvisor {
 
     private static List<MoveTemplate> enemyMoves(ClientBattlePokemon pokemon) {
         List<MoveTemplate> moves = new ArrayList<>();
-        for (String name : CobblemonTeamAdvisor.opponentMoves(pokemon).names()) {
+        var knowledge = CobblemonTeamAdvisor.opponentMoves(pokemon);
+        for (String name : knowledge.names()) {
+            if (moveState.unavailable(pokemon.getUuid(), id(name), knowledge.names(), knowledge.complete()) != null) continue;
             MoveTemplate move = Moves.getByName(name);
             if (move != null) moves.add(move);
         }
@@ -214,7 +270,8 @@ public final class BattleAdvisor {
         int defence = -BattleMatchupPolicy.threatScore(worstType);
         double bestDamage = 0;
         for (Move move : pokemon.getMoveSet()) {
-            if (move != null && move.getCurrentPp() > 0 && damaging(move.getTemplate())) {
+            if (move != null && move.getCurrentPp() > 0 && damaging(move.getTemplate())
+                    && (!active || moveState.unavailable(pokemon.getUuid(), id(move.getName()), ownMoveNames(pokemon), true) == null)) {
                 bestDamage = Math.max(bestDamage, damage(own, foe, move.getTemplate(),
                         move.getTemplate().getEffectiveElementalType(pokemon), 0.85D));
             }
@@ -254,13 +311,20 @@ public final class BattleAdvisor {
         return MOVE_CACHE.computeIfAbsent(tile, BattleAdvisor::calculateMoveAdvice);
     }
 
+    private static List<String> ownMoveNames(Pokemon pokemon) {
+        List<String> names = new ArrayList<>();
+        for (Move move : pokemon.getMoveSet()) if (move != null) names.add(id(move.getName()));
+        return names;
+    }
+
     private static MoveAdvice calculateMoveAdvice(BattleMoveSelection.MoveTile tile) {
         Pokemon pokemon = tile.getPokemon();
         MoveTemplate move = tile.getMoveTemplate();
+        if (pokemon == null || move == null) return new MoveAdvice(0, false, false, "legal fallback");
+        String restriction = moveState.unavailable(pokemon.getUuid(), id(move.getName()), ownMoveNames(pokemon), true);
+        if (restriction != null) return new MoveAdvice(Double.NEGATIVE_INFINITY, false, false, restriction);
         var target = CobblemonTeamAdvisor.target(tile);
-        if (pokemon == null || move == null || target == null || !target.hasPokemon()) {
-            return new MoveAdvice(0, false, false, "legal fallback");
-        }
+        if (target == null || !target.hasPokemon()) return new MoveAdvice(0, false, false, "legal fallback");
         Fighter own = mine(pokemon, null, true);
         Fighter foe = enemy(target.getBattlePokemon());
         double accuracy = BattleMatchupPolicy.accuracy(move.getAccuracy(), own.stage(Stats.ACCURACY), foe.stage(Stats.EVASION));

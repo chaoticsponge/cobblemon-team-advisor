@@ -3,6 +3,6 @@
   "minVersion": "0.8",
   "package": "local.cobblemonteamadvisor.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["BattleMessageMixin"],
+  "client": ["BattleMessageMixin", "BattleSwitchMixin"],
   "injectors": {"defaultRequire": 1}
 }

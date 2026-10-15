@@ -24,6 +24,7 @@ The JSON file includes Cobblemon's serialized Pokemon data. The CSV file include
 - Uses a bundled Cobbleverse trainer snapshot matched by trainer name plus enemy species and level. An unambiguous trainer set or four revealed moves prevents speculative coverage from being added, including when the set contains status moves. Conflicting reveals and merged trainer variants fall back to conservative assumptions.
 - Tracks entry hazards, their removal and Court Change through translation keys in client battle messages. Scores Stealth Rock, Spikes, Toxic Spikes and Sticky Web, including airborne Pokemon, Heavy-Duty Boots and Magic Guard.
 - Scores attack accuracy, common recoil and draining effects, fixed-damage attacks, healing, common status moves, safe setup, and hazard utility. Avoids full-health healing and capped or unsafe setup.
+- Tracks field entries and battle turns to avoid repeated First Impression, Fake Out and Mat Block failures. Also respects consecutive-use restrictions for Gigaton Hammer / Blood Moon, observed Last Resort prerequisites, and repeated No Retreat. Actual switch-in packets reset field-entry restrictions, including after manual switches; rejected button choices do not consume move history.
 - Shows a short recommendation explaining the chosen move or switch and whether enemy moves are known or assumed.
 - Assumes worst-case damaging coverage from species-level and level-up moves when the enemy set is uncertain.
 - Ignores TM, tutor, egg, and other inconsistent move sources for enemy assumptions.
@@ -40,6 +41,6 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.8.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.8.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also runs regression checks for defensive scoring, survival, speed and priority, accuracy and recoil, healing, trainer-set precedence, and field conditions. Live gameplay must still be checked in Minecraft.

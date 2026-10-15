@@ -1,6 +1,7 @@
 package local.cobblemonteamadvisor;
 
 import java.util.List;
+import java.util.UUID;
 
 public final class BattleMatchupPolicyTest {
     public static void main(String[] args) {
@@ -87,7 +88,55 @@ public final class BattleMatchupPolicyTest {
         field.observe("cobblemon.battle.sidestart.ally.tailwind");
         require(field.ally.tailwind && !field.opponent.tailwind, "Tailwind must belong to its actual side");
         require(new BattleFieldState().ally.entryFraction(4, true, false, false) == 0, "A new battle must start without hazards");
-        System.out.println("Battle matchup, survival, turn order, moveset, move utility and field regression checks passed.");
+        UUID sirfetchd = UUID.randomUUID();
+        UUID opponent = UUID.randomUUID();
+        var moves = List.of("firstimpression", "fakeout", "closecombat", "lastresort");
+        BattleMoveState history = new BattleMoveState();
+        history.startTurn(1, List.of(sirfetchd, opponent));
+        require(history.unavailable(sirfetchd, "firstimpression", moves, true) == null, "First Impression must work on entry");
+        history.startTurn(1, List.of(sirfetchd, opponent));
+        require(history.unavailable(sirfetchd, "firstimpression", moves, true) == null,
+                "Repeated rendering or rejected choices must not spend an opener");
+        history.used(sirfetchd, "firstimpression");
+        require(history.unavailable(sirfetchd, "firstimpression", moves, true) != null, "First Impression must not repeat");
+        require(history.unavailable(sirfetchd, "fakeout", moves, true) != null, "Using another move must also consume Fake Out's opportunity");
+        history.startTurn(2, List.of(sirfetchd, opponent));
+        require(history.unavailable(opponent, "firstimpression", moves, true) != null,
+                "A spent turn must invalidate openers even without a used-move message");
+        history.enter(sirfetchd);
+        require(history.unavailable(sirfetchd, "firstimpression", moves, true) == null, "A switch-in must reset opener eligibility");
+        history.startTurn(3, List.of(sirfetchd, opponent));
+        require(history.unavailable(sirfetchd, "firstimpression", moves, true) == null,
+                "A mid-turn switch-in must retain its opener for the next decision turn");
+        history.attempted(sirfetchd);
+        require(history.unavailable(sirfetchd, "matblock", moves, true) != null,
+                "Flinching or paralysis must also consume the first move opportunity");
+
+        history.enter(sirfetchd);
+        history.used(sirfetchd, "gigatonhammer");
+        require(history.unavailable(sirfetchd, "gigatonhammer", moves, true) != null, "Gigaton Hammer cannot repeat consecutively");
+        history.used(sirfetchd, "closecombat");
+        require(history.unavailable(sirfetchd, "gigatonhammer", moves, true) == null, "Another move must end the cooldown");
+        history.used(sirfetchd, "bloodmoon");
+        require(history.unavailable(sirfetchd, "bloodmoon", moves, true) != null, "Blood Moon cannot repeat consecutively");
+        history.enter(sirfetchd);
+        require(history.unavailable(sirfetchd, "bloodmoon", moves, true) == null, "Switching must clear consecutive-move history");
+
+        var resortSet = List.of("protect", "tackle", "lastresort");
+        require(history.unavailable(sirfetchd, "lastresort", resortSet, true) != null, "Last Resort needs its prerequisites");
+        history.used(sirfetchd, "protect");
+        require(history.unavailable(sirfetchd, "lastresort", resortSet, true) != null, "Partially used movesets must not unlock Last Resort");
+        history.used(sirfetchd, "tackle");
+        require(history.unavailable(sirfetchd, "lastresort", resortSet, true) == null, "Using every other move unlocks Last Resort");
+        require(history.unavailable(sirfetchd, "lastresort", List.of("lastresort"), true) != null,
+                "Last Resort cannot be the only move");
+        history.used(sirfetchd, "noretreat");
+        require(history.unavailable(sirfetchd, "noretreat", moves, true) != null, "No Retreat must not be repeatedly selected");
+        history.enter(sirfetchd);
+        require(history.unavailable(sirfetchd, "lastresort", resortSet, true) != null, "Last Resort prerequisites reset on entry");
+        require(new BattleMoveState().unavailable(sirfetchd, "firstimpression", moves, true) == null,
+                "A new battle must not retain restrictions");
+        System.out.println("Battle policy and conditional-move regression checks passed.");
     }
 
     private static int score(double outgoing, double incoming) {
