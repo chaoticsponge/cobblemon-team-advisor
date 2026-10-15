@@ -58,7 +58,7 @@ public final class PokedexScanAdvisor {
         row(message, "Immune to", defensive(types, 0), ChatFormatting.AQUA);
         List<String> strong = TypeMatchups.TYPES.stream().filter(defender -> types.stream()
                 .anyMatch(attack -> TypeMatchups.multiplier(attack, List.of(defender)) > 1)).map(EvolutionGuide::readable).toList();
-        row(message, "Strong vs¹", strong.isEmpty() ? "None" : String.join(", ", strong), ChatFormatting.GOLD);
+        row(message, "Strong vs", strong.isEmpty() ? "None" : String.join(", ", strong), ChatFormatting.GOLD);
         var next = evolutions.next(species.getResourceIdentifier().toString(), form.getName());
         if (!next.known()) row(message, "Evolution", "Requirements unavailable for this species/form", ChatFormatting.GRAY);
         else if (next.entries().isEmpty()) row(message, "Evolution", "No further evolution in the guide", ChatFormatting.GRAY);
@@ -78,11 +78,6 @@ public final class PokedexScanAdvisor {
                 }
             }
         }
-        message.append(Component.literal("\n  Type chart¹ · Evolution guide; server rules may differ")
-                .withStyle(ChatFormatting.DARK_GRAY).withStyle(style -> style.withBold(false).withHoverEvent(new HoverEvent(
-                        HoverEvent.Action.SHOW_TEXT, Component.literal("Type matchups exclude abilities, items and battle effects.\n"
-                        + "¹ Strong vs uses this Pokémon's types against single-type opponents; its moves and dual-type foes can change this.\n"
-                        + "Evolution requirements use Cobblemon 1.7.3 reference data, not private server datapacks.")))));
         // Local chat only: no chat command, server packet or broadcast.
         Minecraft.getInstance().gui.getChat().addMessage(message);
     }

@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.11.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.11.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -65,4 +65,4 @@ Completing a Pokédex scan prints a compact, colored summary in the scanning pla
 
 The evolution guide lists the next branches and their level, item, trade, friendship, move, time, regional biome and other requirements. Four branches appear directly; additional branches are grouped into hover details. Registered Pokémon also get a summary after the scanner focuses, and repeated frames/registration packets do not repeat the same message. Close and reopen the scanner to scan the same target again.
 
-Messages are added only to the local client's chat, with no chat packets or broadcasts. Each player who wants this feature installs the client mod. Evolution reference data comes from Cobblemon 1.7.3: multiplayer servers do not sync private evolution datapacks, so the message notes that server rules may differ. Unknown species/forms are marked unavailable rather than assigned another form's evolution.
+Messages are added only to the local client's chat, with no chat packets or broadcasts. Each player who wants this feature installs the client mod. Evolution reference data comes from Cobblemon 1.7.3: multiplayer servers do not sync private evolution datapacks, so server rules may differ. Unknown species/forms are marked unavailable rather than assigned another form's evolution.
