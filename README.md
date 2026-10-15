@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.14.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.15.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -106,3 +106,13 @@ The preview runs 128 bounded singles trials against the full trainer team. It st
 This is an uncalibrated model estimate, separate from the measured win-rate CSV. It simplifies opponent decisions, HP-dependent damage into five HP bands, multi-hit counts, and switching. It does not simulate trainer bag items, random critical hits, setup/status strategies, all passive effects, weather/terrain changes, hazards, gimmicks, doubles or custom server changes. Percentages never claim a guaranteed 0% or 100%; unresolved trials produce a range or `uncertain`. A bundled team may differ from a server's configuration.
 
 Preview results refresh after party changes and are cached. At most one new trainer is evaluated per half-second; simulations never run in the render callback. Labels use normal depth-tested rendering and respect the hidden HUD and invisible entities. Restart Minecraft after installing the updated jar.
+
+### Productive switching and battle diagnostics
+
+Voluntary switch candidates must survive entry and have a modeled useful follow-up action against the opponent's replies, accounting for speed, priority, status and charging. Switch forecasts use minimum normal outgoing damage and maximum normal incoming damage instead of average damage rolls. A Pokémon that survives the switch-in hit but faints before acting is excluded before immunity/resistance ranking. Forced replacements keep a legal fallback even when no safe counter remains.
+
+After a confirmed voluntary switch, another switch against the same opponent still requires an action first. An emergency exception now requires a damaging replacement that survives the follow-up turn and provides a clear safety improvement, or safely escapes a completely ineffective matchup. Danger alone does not bypass the lock. Every voluntary switch must beat staying by a positive planning margin plus its switching/boost-loss cost. The defensive-score fallback that could accept a slightly worse plan is removed. The comparison normalizes starting HP so a fresh bench member does not create an artificial party-health gain; the planner already charges entry damage and the lost attacking turn.
+
+Each battle now writes a local `battle-logs/<timestamp>-<battle-uuid>.jsonl` file. Rows include mod version, battle ID, time and turn, starting party HP/stats/moves/PP, battle messages, observed health changes, switch-candidate forecasts, switch decisions/reasons, AUTO move choices and alternatives, submitted switches, and invalid choices. Repeated identical evaluations within a turn are suppressed; changed forecasts can be recorded. Rows flush immediately for live diagnosis. Closing a battle does not itself imply a win or loss; explicit outcome messages and the existing trainer win-rate CSV remain the outcome sources.
+
+Diagnostics only use already-received client data, record no ordinary chat, and make no server requests. Unavailable numeric estimates are JSON null. Old fights cannot be reconstructed retroactively. The new switching behavior and traces require a Minecraft restart; battle-model estimates still need live gameplay validation.

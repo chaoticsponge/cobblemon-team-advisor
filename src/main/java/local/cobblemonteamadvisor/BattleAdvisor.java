@@ -85,6 +85,9 @@ public final class BattleAdvisor {
             submittedRequest = null; submittedSwitch = null;
         }
         if (!java.util.Objects.equals(id, battleId)) {
+            BattleTrace.sync(id, battle == null ? Map.of() : Map.of("party", traceParty(), "actors", java.util.Arrays.stream(battle.getSides())
+                    .flatMap(side -> side.getActors().stream()).map(actor -> Map.of("name", actor.getDisplayName().getString(),
+                            "type", actor.getType().name(), "side", actor.getShowdownId())).toList()));
             battleId = id;
             field = new BattleFieldState();
             moveState = new BattleMoveState();
@@ -106,6 +109,7 @@ public final class BattleAdvisor {
     public static void observeEntry(UUID pokemon) {
         syncBattle();
         if (battleId != null) {
+            BattleTrace.event("pokemon_entered", Map.of("pokemon", pokemon.toString()));
             moveState.enter(pokemon);
             switchPolicy.entered(pokemon);
             HEALTH.remove(pokemon);
@@ -145,11 +149,14 @@ public final class BattleAdvisor {
                 opponent = foe.getBattlePokemon().getUuid(); break;
             }
         }
+        BattleTrace.event("auto_switch_submitted", Map.of("pokemon", pokemon.toString(), "forced", request.getForceSwitch(),
+                "active", request.getActivePokemon().getBattlePokemon().getUuid().toString()));
         switchPolicy.submitted(pokemon, opponent, request.getForceSwitch());
     }
 
     public static void observeInvalidChoice() {
         syncBattle();
+        BattleTrace.event("invalid_choice", Map.of());
         switchPolicy.rejected();
         if (submittedRequest != null && submittedSwitch != null) {
             guard.reject(submittedRequest, submittedSwitch);
@@ -176,6 +183,7 @@ public final class BattleAdvisor {
             try {
                 int turn = Integer.parseInt(number);
                 if (turn > moveState.turn()) { firstMove = null; pendingHit = null; randomOrder = false; }
+                BattleTrace.turn(turn);
                 moveState.startTurn(turn, activePokemon().stream().map(ClientBattlePokemon::getUuid).toList());
             } catch (NumberFormatException ignored) { /* Ignore unrelated or malformed turn text. */ }
         }
@@ -285,6 +293,10 @@ public final class BattleAdvisor {
                     pendingHit.clean && packet.getNewMaxHealth() == null, after <= 0);
             pendingHit = null;
         }
+        BattleTrace.event("health", Map.of("pokemon", pokemon.getUuid().toString(), "name", pokemon.getDisplayName().getString(),
+                "before_fraction", hpFraction(pokemon),
+                "after_fraction", BattleMatchupPolicy.healthFraction(packet.getNewHealth(), maximum, pokemon.isHpFlat()),
+                "raw_health", packet.getNewHealth(), "max_health", maximum, "flat", pokemon.isHpFlat()));
         HEALTH.put(pokemon.getUuid(), packet.getNewHealth());
         if (packet.getNewHealth() <= 0) FAINTED.put(pokemon.getUuid(), pokemon.getActor().getUuid() + "|" + memberKey(pokemon));
     }
@@ -362,9 +374,14 @@ public final class BattleAdvisor {
 
     private static void observe(Component message) {
         if (message.getContents() instanceof TranslatableContents translation) {
+            observeMoveMessage(translation);
+            if (translation.getKey().startsWith("cobblemon.battle.")) {
+                BattleTrace.event("message", Map.of("key", translation.getKey(), "text", message.getString(),
+                        "args", java.util.Arrays.stream(translation.getArgs()).map(argument -> argument instanceof Component component
+                                ? component.getString() : String.valueOf(argument)).toList()));
+            }
             TrainerBattleTracker.message(translation.getKey(), translation.getArgs());
             field.observe(translation.getKey());
-            observeMoveMessage(translation);
             observeEffect(translation);
             for (Object argument : translation.getArgs()) {
                 if (argument instanceof Component component) observe(component);
@@ -535,6 +552,23 @@ public final class BattleAdvisor {
                     && member.moves().containsAll(knownMoves(pokemon))).toList();
             return matches.size() == 1 ? matches.getFirst() : null;
         });
+    }
+
+    private static List<Map<String, ?>> traceParty() {
+        List<Map<String, ?>> result = new ArrayList<>();
+        for (Pokemon pokemon : party()) {
+            List<Map<String, ?>> moves = new ArrayList<>();
+            for (Move move : pokemon.getMoveSet()) if (move != null)
+                moves.add(Map.of("move", move.getName(), "pp", move.getCurrentPp()));
+            Map<String, Integer> stats = new java.util.LinkedHashMap<>();
+            for (Stats stat : Stats.values()) if (stat != Stats.ACCURACY && stat != Stats.EVASION)
+                stats.put(stat.getShowdownId(), pokemon.getStat(stat));
+            result.add(Map.of("pokemon", pokemon.getUuid().toString(), "species", pokemon.getSpecies().getName(),
+                    "level", pokemon.getLevel(), "hp", pokemon.getCurrentHealth(), "max_hp", pokemon.getMaxHealth(),
+                    "ability", pokemon.getAbility().getName(), "item", BuiltInRegistries.ITEM.getKey(pokemon.getHeldItem$common().getItem()).toString(),
+                    "moves", moves, "stats", stats));
+        }
+        return result;
     }
 
     private static List<Pokemon> party() {
@@ -812,15 +846,29 @@ public final class BattleAdvisor {
         Boolean learned = observations.first(own.uuid(), foe.uuid(), speedContext(own, foe));
         if (learned != null) mySpeed = learned != field.trickRoom ? theirSpeed * 1.01 : theirSpeed * 0.99;
         boolean enemySubstitute = moveState.hasEffect(foe.uuid(), "substitute");
+        List<BattlePlanner.Action> replies = actions(foe, own, null);
+        if (switching) {
+            actions = boundedActions(actions, own, foe, 0.85);
+            replies = boundedActions(replies, foe, own, 1);
+        }
         BattlePlanner.Combatant mine = new BattlePlanner.Combatant(own.hp - (switching ? entryDamage(own) : 0), own.maxHp, mySpeed,
                 residual(own), own.entering ? 0 : moveState.hasEffect(own.uuid(), "substitute") ? own.maxHp / 4 : 0, own.status, actions, own.entering ? "" : moveState.lastMove(own.uuid()),
                 own.entering ? "" : moveState.effectMove(own.uuid(), "charging"));
         BattlePlanner.Combatant enemy = new BattlePlanner.Combatant(foe.hp, foe.maxHp, theirSpeed, unknownRaidHp(foe) ? 0 : residual(foe),
-                enemySubstitute ? foe.maxHp / 4 : 0, foe.status, actions(foe, own, null), moveState.lastMove(foe.uuid()),
+                enemySubstitute ? foe.maxHp / 4 : 0, foe.status, replies, moveState.lastMove(foe.uuid()),
                 moveState.effectMove(foe.uuid(), "charging"));
         BattlePlanner.Plan result = BattlePlanner.evaluate(mine, enemy, first, switching, field.trickRoom);
         return new BattlePlanner.Plan(result.value() - reservePenalty(own, foe, result.hpRemaining()),
-                result.next(), result.survives(), result.hpRemaining());
+                result.next(), result.survives(), result.hpRemaining(), result.acts());
+    }
+
+    private static List<BattlePlanner.Action> boundedActions(List<BattlePlanner.Action> actions, Fighter user, Fighter target, double roll) {
+        return actions.stream().map(action -> {
+            MoveTemplate move = Moves.getByName(action.id());
+            if (move == null) return action;
+            ElementalType type = user.own == null ? move.getElementalType() : move.getEffectiveElementalType(user.own);
+            return action.withDamage(unknownRaidHp(target) ? 0 : damage(user, target, move, type, roll));
+        }).toList();
     }
 
     private static BattlePlanner.Plan movePlan(BattleMoveSelection.MoveTile tile, Fighter own, Fighter foe) {
@@ -840,50 +888,93 @@ public final class BattleAdvisor {
         });
     }
 
+    static boolean viableSwitch(Pokemon candidate, ShowdownPokemon showdown, ClientBattlePokemon opponent) {
+        Matchup next = matchup(candidate, showdown, opponent, false);
+        BattlePlanner.Plan forecast = switchPlan(candidate, showdown, opponent);
+        Fighter own = mine(candidate, showdown, false), foe = enemy(opponent);
+        boolean useful = canDamage(own, foe) && productiveFollowup(own, foe, forecast);
+        boolean viable = BattleSwitchPolicy.viable(next.survives(), forecast.acts(), useful);
+        BattleTrace.evaluation("candidate:" + candidate.getUuid() + ":" + opponent.getUuid() + ":" + own.hp + ":" + foe.hp, "switch_candidate",
+                Map.of("pokemon", candidate.getUuid().toString(), "name", candidate.getSpecies().getName(),
+                        "hp", own.hp, "max_hp", own.maxHp, "entry_damage", next.entry(), "incoming", next.incoming(), "score", next.score(),
+                        "plan", forecast, "viable", viable));
+        return viable;
+    }
+
+    private static boolean productiveFollowup(Fighter own, Fighter foe, BattlePlanner.Plan forecast) {
+        for (BattlePlanner.Action action : actions(own, foe, null)) {
+            if (!action.id().equals(forecast.next())) continue;
+            MoveTemplate move = Moves.getByName(action.id());
+            if (move != null && damaging(move) && damage(own, foe, move, move.getEffectiveElementalType(own.own), 0.85) > 0) return true;
+            return forecast.survives() && (action.effect().heal() > 0 && own.hp < own.maxHp
+                    || action.effect().attack() > 1 || action.effect().defence() > 1 || !action.effect().status().isEmpty());
+        }
+        return false;
+    }
+
+    private static boolean canDamage(Fighter own, Fighter foe) {
+        for (Move move : own.own.getMoveSet()) {
+            if (move != null && move.getCurrentPp() > 0 && available(own, move.getTemplate()) && damaging(move.getTemplate())
+                    && damage(own, foe, move.getTemplate(), move.getTemplate().getEffectiveElementalType(own.own), 0.85) > 0) return true;
+        }
+        return false;
+    }
+
     static boolean shouldSwitch(BattleMoveSelection selection, Pokemon candidate, ShowdownPokemon showdown, ClientBattlePokemon opponent) {
         Pokemon active = CobblemonTeamAdvisor.activePokemon(selection);
         if (active == null || opponent == null || candidate == null || selection.getMoveSet().getTrapped()
                 || !canSwitch(selection.getRequest(), candidate, showdown)) return false;
         for (var tile : selection.getMoveTiles()) {
-            if (tile.getSelectable() && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo())) return false;
+            if (tile.getSelectable() && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo()))
+                return switchDecision(active, candidate, opponent, false, "stay for a reliable KO", Map.of());
         }
+        if (!viableSwitch(candidate, showdown, opponent))
+            return switchDecision(active, candidate, opponent, false, "replacement cannot contribute after entry", Map.of());
         Matchup current = matchup(active, null, opponent, true);
         Matchup next = matchup(candidate, showdown, opponent, false);
-        if (!next.survives()) return false;
-        Fighter own = mine(active, null, true);
-        Fighter foe = enemy(opponent);
+        Fighter own = mine(active, null, true), foe = enemy(opponent), replacement = mine(candidate, showdown, false);
         boolean canDamage = false;
         for (var tile : selection.getMoveTiles()) {
-            if (tile.getSelectable() && Double.isFinite(moveAdvice(tile).score()) && damaging(tile.getMoveTemplate())
-                    && damage(own, foe, tile.getMoveTemplate(), tile.getElementalType(), 0.85) > 0) {
-                canDamage = true; break;
-            }
+            if (tile.getSelectable() && available(own, tile.getMoveTemplate()) && damaging(tile.getMoveTemplate())
+                    && damage(own, foe, tile.getMoveTemplate(), tile.getElementalType(), 0.85) > 0) canDamage = true;
         }
-        Fighter replacement = mine(candidate, showdown, false);
-        boolean replacementCanDamage = false;
-        if (!canDamage) {
-            for (Move move : candidate.getMoveSet()) {
-                if (move != null && move.getCurrentPp() > 0 && damaging(move.getTemplate())
-                        && damage(replacement, foe, move.getTemplate(), move.getTemplate().getEffectiveElementalType(candidate), 0.85) > 0) {
-                    replacementCanDamage = true; break;
-                }
-            }
-        }
-        if (!switchPolicy.allows(active.getUuid(), opponent.getUuid(),
-                BattleSwitchPolicy.emergency(!current.survives(), canDamage, replacementCanDamage))) return false;
+        BattlePlanner.Plan forecast = switchPlan(candidate, showdown, opponent);
+        double currentRisk = current.incoming() / Math.max(1, own.hp);
+        double nextRisk = next.incoming() / Math.max(1, replacement.hp - next.entry());
+        boolean emergency = BattleSwitchPolicy.emergency(!current.survives(), canDamage, canDamage(replacement, foe),
+                forecast.survives() && forecast.acts(), currentRisk, nextRisk);
+        if (!switchPolicy.allows(active.getUuid(), opponent.getUuid(), emergency))
+            return switchDecision(active, candidate, opponent, false, "incoming Pokemon must act; no productive safe escape", Map.of());
         int lostBoosts = 0;
-        for (Stats stat : List.of(Stats.ATTACK, Stats.SPECIAL_ATTACK, Stats.DEFENCE, Stats.SPECIAL_DEFENCE, Stats.SPEED)) {
+        for (Stats stat : List.of(Stats.ATTACK, Stats.SPECIAL_ATTACK, Stats.DEFENCE, Stats.SPECIAL_DEFENCE, Stats.SPEED))
             lostBoosts += Math.max(0, own.stage(stat));
-        }
         double stayValue = -Double.MAX_VALUE;
-        for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && Double.isFinite(moveAdvice(tile).score())) {
-            stayValue = Math.max(stayValue, movePlan(tile, own, enemy(opponent)).value());
-        }
-        BattlePlanner.Plan switchPlan = switchPlan(candidate, showdown, opponent);
-        int cost = current.survives() ? 4 + Math.min(8, lostBoosts * 2) : 0;
-        double gain = switchPlan.value() - stayValue;
-        return BattleSwitchPolicy.worthwhile(gain, cost, current.score(), next.score(),
-                current.incoming() / Math.max(1, own.hp), next.incoming() / Math.max(1, replacement.hp - next.entry()));
+        for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && Double.isFinite(moveAdvice(tile).score()))
+            stayValue = Math.max(stayValue, movePlan(tile, own, foe).value());
+        int cost = 4 + Math.min(8, lostBoosts * 2);
+        double healthAdjustment = BattleSwitchPolicy.healthAdjustment(own.hp / own.maxHp, replacement.hp / replacement.maxHp);
+        double gain = forecast.value() + healthAdjustment - stayValue;
+        boolean worthwhile = BattleSwitchPolicy.worthwhile(gain, cost);
+        return switchDecision(active, candidate, opponent, worthwhile, worthwhile ? "clear productive improvement" : "gain does not cover switching cost",
+                Map.of("stay_value", stayValue, "switch_plan", forecast, "party_health_adjustment", healthAdjustment,
+                        "gain", gain, "required_gain", 6 + cost, "emergency", emergency));
+    }
+
+    private static boolean switchDecision(Pokemon active, Pokemon candidate, ClientBattlePokemon opponent, boolean allowed,
+                                          String reason, Map<String, ?> scores) {
+        BattleTrace.evaluation("decision:" + active.getUuid() + ":" + candidate.getUuid() + ":" + opponent.getUuid() + ":" + allowed + ":" + reason + ":" + scores.hashCode(), "switch_evaluation",
+                Map.of("active", active.getUuid().toString(), "candidate", candidate.getUuid().toString(), "opponent", opponent.getUuid().toString(),
+                        "allowed", allowed, "reason", reason, "scores", scores));
+        return allowed;
+    }
+
+    static void traceMove(BattleMoveSelection.MoveTile tile) {
+        Pokemon active = tile.getPokemon();
+        ClientBattlePokemon opponent = CobblemonTeamAdvisor.currentOpponent(tile.getMoveSelection());
+        BattleTrace.event("auto_move_submitted", Map.of("pokemon", active == null ? "unknown" : active.getUuid().toString(),
+                "opponent", opponent == null ? "unknown" : opponent.getUuid().toString(), "move", tile.getMoveTemplate().getName(),
+                "advice", moveAdvice(tile), "options", tile.getMoveSelection().getMoveTiles().stream().filter(option -> option.getSelectable())
+                        .map(option -> Map.of("move", option.getMoveTemplate().getName(), "pp", option.getMove().getPp(), "advice", moveAdvice(option))).toList()));
     }
 
     static MoveAdvice moveAdvice(BattleMoveSelection.MoveTile tile) {

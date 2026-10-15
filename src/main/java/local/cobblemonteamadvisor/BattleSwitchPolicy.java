@@ -32,15 +32,23 @@ final class BattleSwitchPolicy {
         return emergency || !opponent.equals(needsAction.get(active));
     }
 
-    static boolean emergency(boolean threatened, boolean canDamage, boolean replacementCanDamage) {
-        return threatened || !canDamage && replacementCanDamage;
+    static boolean emergency(boolean threatened, boolean canDamage, boolean replacementCanDamage,
+                             boolean survivesFollowup, double currentRisk, double nextRisk) {
+        // Danger alone must not unlock a chain of switches into the same losing position.
+        return replacementCanDamage && survivesFollowup
+                && (!canDamage || threatened && nextRisk < 1 && nextRisk <= currentRisk - 0.25);
     }
 
-    static boolean worthwhile(double gain, int cost, int currentScore, int nextScore, double currentRisk, double nextRisk) {
-        if (gain >= 6 + cost) return true;
-        if (gain < -3) return false;
-        // Tiny hits from weak opponents do not justify spending a turn chasing a type-score improvement.
-        return currentRisk >= 0.25 && nextRisk <= currentRisk - 0.15
-                && BattleMatchupPolicy.shouldSwitch(currentScore + cost, nextScore);
+    static boolean viable(boolean survivesEntry, boolean acts, boolean useful) {
+        return survivesEntry && acts && useful;
+    }
+
+    static double healthAdjustment(double currentFraction, double replacementFraction) {
+        // Compare changes in total party health, not a fresh bench member's HP against a wounded active.
+        return 25 * (currentFraction - replacementFraction);
+    }
+
+    static boolean worthwhile(double gain, int cost) {
+        return Double.isFinite(gain) && gain >= 6 + cost;
     }
 }

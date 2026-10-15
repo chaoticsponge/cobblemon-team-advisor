@@ -221,11 +221,19 @@ public final class CobblemonTeamAdvisor {
             BattleMoveSelection.MoveTile tile = bestMoveTile(selection);
             if (tile != null) {
                 TrainerBattleTracker.automatedAction();
+                BattleAdvisor.traceMove(tile);
                 tile.onClick();
                 lastAutoActionAt = now;
             }
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
             BattleSwitchPokemonSelection.SwitchTile tile = bestSwitchTile(selection, currentOpponent(selection));
+            if (!selection.getRequest().getForceSwitch()) {
+                BattleMoveSelection moves = new BattleMoveSelection(battleGUI, selection.getRequest());
+                if (tile == null || !BattleAdvisor.shouldSwitch(moves, tile.getPokemon(), tile.getShowdownPokemon(), currentOpponent(selection))) {
+                    battleGUI.changeActionSelection(moves);
+                    return;
+                }
+            }
             if (tile != null) {
                 if (BattleAdvisor.canSwitch(selection.getRequest(), tile.getPokemon(), tile.getShowdownPokemon())
                         && selection.mousePrimaryClicked(tile.getX() + BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH / 2.0D,
@@ -359,7 +367,7 @@ public final class CobblemonTeamAdvisor {
         return opponent == null ? null : opponent.getBattlePokemon();
     }
 
-    private static ClientBattlePokemon currentOpponent(BattleMoveSelection selection) {
+    static ClientBattlePokemon currentOpponent(BattleMoveSelection selection) {
         ActiveClientBattlePokemon opponent = selection.getRequest().getActivePokemon().getAdjacentOpponents().stream()
                 .filter(ActiveClientBattlePokemon.class::isInstance)
                 .map(ActiveClientBattlePokemon.class::cast)
@@ -420,6 +428,8 @@ public final class CobblemonTeamAdvisor {
                 continue;
             }
 
+            if (!selection.getRequest().getForceSwitch()
+                    && !BattleAdvisor.viableSwitch(pokemon, tile.getShowdownPokemon(), opponent)) continue;
             int score = matchupScore(pokemon, tile.getShowdownPokemon(), opponent);
             if (score > bestScore) {
                 bestScore = score;

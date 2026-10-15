@@ -173,6 +173,7 @@ public final class BattleMatchupPolicyTest {
         PokedexGuideTest.run();
         TrainerBattleStatsTest.run();
         TrainerWinEstimatorTest.run();
+        BattleTraceTest.run();
         System.out.println("Battle policy and conditional-move regression checks passed.");
     }
 

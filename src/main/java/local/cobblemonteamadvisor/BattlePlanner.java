@@ -23,6 +23,10 @@ final class BattlePlanner {
                boolean opener, boolean cooldown, boolean physical) {
             this(id, damage, accuracy, priority, pp, effect, opener, cooldown, physical, false, false, false);
         }
+        Action withDamage(double amount) {
+            return new Action(id, amount, accuracy, priority, pp, effect, opener, cooldown, physical,
+                    bypassSubstitute, recharge, charging, breaksProtect);
+        }
         static Action attack(String id, double damage, int priority) {
             return new Action(id, damage, 1, priority, 10, Effect.NONE, false, false, true);
         }
@@ -33,13 +37,13 @@ final class BattlePlanner {
             this(hp, maxHp, speed, residual, substitute, status, actions, "", "");
         }
     }
-    record Plan(double value, String next, boolean survives, double hpRemaining) { }
+    record Plan(double value, String next, boolean survives, double hpRemaining, boolean acts) { }
     private static final Action PASS = Action.attack("pass", 0, 0);
 
     private static final class State {
         double hp, substitute, attack = 1, defence = 1, speed, residual;
         String status, last = "", charged = "";
-        boolean protectedTurn;
+        boolean protectedTurn, acted;
         boolean newlyBurned;
         State(Combatant fighter) {
             hp = fighter.hp; substitute = fighter.substitute; speed = fighter.speed;
@@ -47,27 +51,30 @@ final class BattlePlanner {
         }
         State(State source) {
             hp = source.hp; substitute = source.substitute; attack = source.attack; defence = source.defence;
-            speed = source.speed; residual = source.residual; status = source.status; last = source.last; charged = source.charged; newlyBurned = source.newlyBurned;
+            speed = source.speed; residual = source.residual; status = source.status; last = source.last; charged = source.charged; newlyBurned = source.newlyBurned; acted = source.acted;
         }
     }
 
     static Plan evaluate(Combatant own, Combatant foe, Action first, boolean switching, boolean trickRoom) {
         State initial = new State(own), opponent = new State(foe);
-        if (terminal(initial, opponent)) return new Plan(value(initial, opponent, own, foe), "", initial.hp > 0, initial.hp);
+        if (terminal(initial, opponent)) return new Plan(value(initial, opponent, own, foe), "", initial.hp > 0, initial.hp, false);
         double worst = Double.POSITIVE_INFINITY;
         String followup = "";
         boolean survives = true;
         double hpRemaining = own.hp;
+        boolean acts = true;
         for (Action reply : actions(foe.actions)) {
             State mine = new State(initial), enemy = new State(opponent);
             turn(mine, enemy, own, foe, switching ? PASS : first, reply, trickRoom);
-            Plan continuation = terminal(mine, enemy) ? new Plan(value(mine, enemy, own, foe), "", mine.hp > 0, mine.hp)
+            Plan continuation = terminal(mine, enemy) ? new Plan(value(mine, enemy, own, foe), "", mine.hp > 0, mine.hp, mine.acted)
                     : bestSecond(mine, enemy, own, foe, first, reply, switching, trickRoom);
+            acts &= continuation.acts;
+            survives &= continuation.survives;
             if (continuation.value < worst) {
-                worst = continuation.value; followup = continuation.next; survives = continuation.survives; hpRemaining = continuation.hpRemaining;
+                worst = continuation.value; followup = continuation.next; hpRemaining = continuation.hpRemaining;
             }
         }
-        return new Plan(worst, followup, survives, hpRemaining);
+        return new Plan(worst, followup, survives, hpRemaining, acts);
     }
 
     private static Plan bestSecond(State mine, State enemy, Combatant own, Combatant foe,
@@ -76,26 +83,31 @@ final class BattlePlanner {
         String next = "";
         boolean survives = false;
         double bestHp = mine.hp;
+        boolean bestActs = false;
         for (Action action : actions(own.actions)) {
             if (!secondAllowed(action, previous, switched)) continue;
             double worst = Double.POSITIVE_INFINITY;
             boolean alive = true;
             double worstHp = mine.hp;
+            boolean acts = true;
             for (Action answer : actions(foe.actions)) {
                 if (!secondAllowed(answer, reply, false)) continue;
                 State a = new State(mine), b = new State(enemy);
                 turn(a, b, own, foe, action, answer, trickRoom);
+                acts &= a.acted;
+                alive &= a.hp > 0;
                 double score = value(a, b, own, foe);
-                if (score < worst) { worst = score; alive = a.hp > 0; worstHp = a.hp; }
+                if (score < worst) { worst = score; worstHp = a.hp; }
             }
             if (worst == Double.POSITIVE_INFINITY) {
                 State a = new State(mine), b = new State(enemy);
                 turn(a, b, own, foe, action, PASS, trickRoom);
+                acts = a.acted;
                 worst = value(a, b, own, foe); alive = a.hp > 0; worstHp = a.hp;
             }
-            if (worst > best) { best = worst; next = action.id; survives = alive; bestHp = worstHp; }
+            if (worst > best || worst == best && acts && !bestActs) { best = worst; next = action.id; survives = alive; bestHp = worstHp; bestActs = acts; }
         }
-        if (best != -Double.MAX_VALUE) return new Plan(best, next, survives, bestHp);
+        if (best != -Double.MAX_VALUE) return new Plan(best, next, survives, bestHp, bestActs);
         // An exhausted or opener-only moveset must still suffer the opponent's next action.
         double worst = Double.POSITIVE_INFINITY;
         double remaining = mine.hp;
@@ -104,7 +116,7 @@ final class BattlePlanner {
             turn(a, b, own, foe, PASS, secondAllowed(answer, reply, false) ? answer : PASS, trickRoom);
             if (value(a, b, own, foe) < worst) { worst = value(a, b, own, foe); remaining = a.hp; }
         }
-        return new Plan(worst - 10, "", remaining > 0, remaining);
+        return new Plan(worst - 10, "", remaining > 0, remaining, mine.acted);
     }
 
     private static boolean secondAllowed(Action move, Action previous, boolean switched) {
@@ -135,6 +147,7 @@ final class BattlePlanner {
         if (user.hp <= 0 || target.hp <= 0 || user.status.equals("slp") || user.status.equals("frz")) return;
         if (action.charging && !user.charged.equals(action.id)) { user.charged = action.id; user.last = action.id; return; }
         user.charged = "";
+        if (!action.id.equals("pass") && !action.id.equals("switch") && action.accuracy > 0) user.acted = true;
         double chance = action.accuracy * (user.status.equals("par") ? 0.75 : 1);
         Effect effect = action.effect;
         user.hp = Math.min(own.maxHp, user.hp + effect.heal * chance);

@@ -31,16 +31,26 @@ final class BattleSwitchPolicyTest {
         check(!policy.allows(golurk, sentret, false), "Another slot entering must not unlock Golurk's pending action");
         check(new BattleSwitchPolicy().allows(golurk, sentret, false), "Switch history must not carry into a new battle");
 
-        check(!BattleSwitchPolicy.emergency(false, false, false), "Two ineffective Pokemon must not bypass the progress lock indefinitely");
-        check(BattleSwitchPolicy.emergency(false, false, true), "A replacement that can actually damage an immune target must be allowed");
-        check(BattleSwitchPolicy.emergency(true, true, true), "Immediate danger must still allow escape");
-        check(!BattleSwitchPolicy.worthwhile(0, 4, 10, 40, 0.02, 0.01),
-                "A weak Sentret's tiny damage must not justify switching just because a bench type score is higher");
-        check(!BattleSwitchPolicy.worthwhile(0, 4, 40, 10, 0.01, 0.02), "Reversing that harmless matchup must also stay in");
-        check(BattleSwitchPolicy.worthwhile(0, 4, 0, 12, 0.5, 0.1), "A real defensive improvement must still justify proactive switching");
-        check(BattleSwitchPolicy.worthwhile(20, 4, 0, 0, 0.1, 0.1), "A substantial actual planning gain must remain eligible");
-        check(!BattleSwitchPolicy.worthwhile(-5, 0, 0, 30, 1.2, 0.1), "A type bonus must not override a materially worse switch plan");
-        check(!BattleSwitchPolicy.worthwhile(0, 4, 10, 10, 0.5, 0.1), "A tie in the final matchup score must not switch");
+        check(!BattleSwitchPolicy.emergency(false, false, false, true, 0, 0), "Two ineffective Pokemon must not bypass the progress lock");
+        check(BattleSwitchPolicy.emergency(false, false, true, true, 0, 0), "A safe damaging replacement can escape an ineffective matchup");
+        check(BattleSwitchPolicy.emergency(true, true, true, true, 1.5, 0.5), "A safer replacement that survives its follow-up can escape");
+        check(!BattleSwitchPolicy.emergency(true, true, true, false, 1.5, 0.6), "Surviving entry without surviving the follow-up cannot unlock another swap");
+        check(!BattleSwitchPolicy.emergency(true, true, true, true, 1.1, 0.9), "A marginal safety change cannot unlock a switch chain");
+        check(!BattleSwitchPolicy.worthwhile(0, 4), "A defensive type-score improvement alone must not switch");
+        check(!BattleSwitchPolicy.worthwhile(-2, 0), "The old slightly-worse-plan fallback must be removed");
+        check(BattleSwitchPolicy.worthwhile(20, 4), "A substantial actual planning gain remains eligible");
+        check(!BattleSwitchPolicy.worthwhile(9, 4), "Switching must earn its full improvement margin");
+        check(BattleSwitchPolicy.worthwhile(10, 4), "A clear productive improvement remains available");
+        check(!BattleSwitchPolicy.worthwhile(Double.NaN, 4), "Invalid forecasts must never submit switches");
+        check(BattleSwitchPolicy.healthAdjustment(0.4, 1) == -15, "A fresh bench member cannot manufacture a party-health gain");
+        check(BattleSwitchPolicy.healthAdjustment(1, 1) == 0, "Equal initial health needs no baseline adjustment");
+        check(!BattleSwitchPolicy.viable(true, false, true), "Surviving entry is insufficient without an action");
+        check(!BattleSwitchPolicy.viable(true, true, false), "Executing a useless action is insufficient");
+        check(!BattleSwitchPolicy.viable(false, true, true), "Entry-hazard or switch-in KOs are never viable");
+        check(BattleSwitchPolicy.viable(true, true, true), "A productive counter remains viable");
+        check(!policy.allows(golurk, sentret, BattleSwitchPolicy.emergency(true, true, true, false, 1.5, 0.6)),
+                "Repeated Bertha-style danger must not bypass the existing action lock");
+
         check(rank(0, 20, 100, 0, 0, 0, 0.3) > rank(0.5, 100, 100, 0, 5, 0, 2),
                 "A surviving immune counter must rank above a resistant counter even when the latter has more offence and HP");
         check(rank(0.5, 50, 100, 0, 5, 0, 0.2) > rank(1, 100, 100, 0, 10, 0, 2),
@@ -59,6 +69,30 @@ final class BattleSwitchPolicyTest {
                 "Actual remaining HP and hit survival must matter as well as the percentage bar");
         check(rank(0, 100, 100, 0, 0, 0, 0) < rank(1, 100, 100, 0, 10, 0, 0.5),
                 "A Pokemon that cannot hurt the opponent is not a viable offensive counter");
+
+        var hit = BattlePlanner.Action.attack("hit", 50, 0);
+        var reply = BattlePlanner.Action.attack("reply", 60, 0);
+        var enemy = new BattlePlanner.Combatant(100, 100, 100, 0, 0, "", java.util.List.of(reply));
+        var slow = new BattlePlanner.Combatant(100, 100, 50, 0, 0, "", java.util.List.of(hit));
+        var slowPlan = BattlePlanner.evaluate(slow, enemy, hit, true, false);
+        check(!slowPlan.acts() && !slowPlan.survives(),
+                "Bertha regression: entering at 100 HP and taking 60 twice before attacking is not productive");
+        check(!BattleSwitchPolicy.viable(true, slowPlan.acts(), true), "Surviving that first hit must not make this a viable switch");
+        var fast = new BattlePlanner.Combatant(100, 100, 200, 0, 0, "", java.util.List.of(hit));
+        var fastPlan = BattlePlanner.evaluate(fast, enemy, hit, true, false);
+        check(fastPlan.acts() && !fastPlan.survives(), "An attack before fainting must be distinguished from fainting without attacking");
+        var ko = BattlePlanner.Action.attack("ko", 120, 0);
+        var counter = new BattlePlanner.Combatant(100, 100, 200, 0, 0, "", java.util.List.of(ko));
+        var counterPlan = BattlePlanner.evaluate(counter, enemy, ko, true, false);
+        check(counterPlan.acts() && counterPlan.survives(), "A fast counter that KOs after entry must still permit proactive switching");
+        var asleep = new BattlePlanner.Combatant(100, 100, 200, 0, 0, "slp", java.util.List.of(ko));
+        check(!BattlePlanner.evaluate(asleep, enemy, ko, true, false).acts(), "Sleep must not promise a follow-up action");
+        var priority = BattlePlanner.Action.attack("priority", 60, 1);
+        var priorityFoe = new BattlePlanner.Combatant(100, 100, 100, 0, 0, "", java.util.List.of(priority));
+        check(!BattlePlanner.evaluate(fast, priorityFoe, hit, true, false).acts(), "Priority must be included in post-entry action viability");
+        var charger = new BattlePlanner.Action("charge", 100, 1, 0, 10, BattlePlanner.Effect.NONE, false, false, true, false, false, true);
+        var charging = new BattlePlanner.Combatant(100, 100, 200, 0, 0, "", java.util.List.of(charger));
+        check(!BattlePlanner.evaluate(charging, enemy, charger, true, false).acts(), "Starting a charging move must not count as delivering its damage");
 
         System.out.println("Confirmed-switch progress, weak-opponent stability and emergency-switch checks passed.");
     }

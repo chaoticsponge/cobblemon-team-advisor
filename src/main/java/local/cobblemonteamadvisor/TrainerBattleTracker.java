@@ -23,6 +23,7 @@ final class TrainerBattleTracker {
     static void initialize() {
         version = ModList.get().getModContainerById(CobblemonTeamAdvisor.MOD_ID).orElseThrow()
                 .getModInfo().getVersion().toString();
+        BattleTrace.initialize(Minecraft.getInstance().gameDirectory.toPath(), version);
         try {
             stats = new TrainerBattleStats(Minecraft.getInstance().gameDirectory.toPath());
         } catch (IOException error) {
