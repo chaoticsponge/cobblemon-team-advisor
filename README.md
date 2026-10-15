@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.12.2.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.13.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -90,3 +90,9 @@ After a confirmed automatic voluntary switch, the incoming Pokémon must use a m
 Replacement candidates must survive entry hazards, the expected incoming hit and harmful residual damage, and have an effective damaging move. Among viable candidates, defensive tiers are ordered: immunity, quarter resistance, resistance, neutral, weakness, then double weakness. Health and outgoing damage break ties within a tier; extra offensive power cannot reverse those defensive priorities.
 
 The health contribution includes current HP, HP left after entry/incoming damage and remaining hit capacity. Switch hints show current and estimated post-hit HP. Safe immediate KOs and the switch-loop protection still take precedence over unnecessary voluntary swaps. Attacks continue to compare their fully modified damage rather than their type name: conditional moves such as Brine use their doubled power only when the target is at half HP or below, then apply stats, STAB, effectiveness and other known modifiers.
+
+### Trainer win-rate CSV
+
+`trainer-battle-stats.csv` in the Minecraft profile directory contains `mod_version,trainer_name,number_of_battles,win_rate`. Each version/trainer pair has its own row. A completed trainer battle counts when AUTO submitted at least one move or switch; mixed manual/AUTO battles count too. Manual-only battles, wild battles, raids represented as wild Pokémon, PvP, spectating, fleeing, disconnects and unrecognized outcomes are excluded. Results use the client's existing translated victory messages, with exact side-name matching; no extra server requests are made.
+
+The CSV refreshes after each recognized win or loss. `trainer-battle-stats.json` stores exact integer wins and battle counts across restarts and upgrades; keep both files, and do not edit the CSV to change totals. Statistics begin with this release; earlier battles cannot be reconstructed. Comparisons reflect your local party, trainer mix and use of AUTO, not a controlled benchmark.

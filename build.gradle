@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'local.cobblemonteamadvisor'
-version = '1.12.2'
+version = '1.13.0'
 
 base {
     archivesName = 'cobblemon-team-advisor'

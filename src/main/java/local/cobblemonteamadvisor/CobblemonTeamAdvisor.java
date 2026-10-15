@@ -62,6 +62,7 @@ public final class CobblemonTeamAdvisor {
     private static boolean wasPcOpen;
 
     public CobblemonTeamAdvisor() {
+        TrainerBattleTracker.initialize();
     }
 
     @SubscribeEvent
@@ -213,6 +214,7 @@ public final class CobblemonTeamAdvisor {
 
             BattleMoveSelection.MoveTile tile = bestMoveTile(selection);
             if (tile != null) {
+                TrainerBattleTracker.automatedAction();
                 tile.onClick();
                 lastAutoActionAt = now;
             }
@@ -222,6 +224,7 @@ public final class CobblemonTeamAdvisor {
                 if (BattleAdvisor.canSwitch(selection.getRequest(), tile.getPokemon(), tile.getShowdownPokemon())
                         && selection.mousePrimaryClicked(tile.getX() + BattleSwitchPokemonSelection.SwitchTile.SELECT_WIDTH / 2.0D,
                         tile.getY() + BattleSwitchPokemonSelection.SwitchTile.SELECT_HEIGHT / 2.0D)) {
+                    TrainerBattleTracker.automatedAction();
                     BattleAdvisor.submittedSwitch(selection.getRequest(), tile.getPokemon().getUuid());
                 }
                 lastAutoActionAt = now;

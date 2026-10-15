@@ -79,6 +79,7 @@ public final class BattleAdvisor {
         ROSTER_CACHE.clear();
         PLAN_CACHE.clear();
         ClientBattle battle = CobblemonClient.INSTANCE.getBattle();
+        TrainerBattleTracker.sync(battle);
         UUID id = battle == null ? null : battle.getBattleId();
         if (battle != null && submittedRequest != null && !battle.getPendingActionRequests().contains(submittedRequest)) {
             submittedRequest = null; submittedSwitch = null;
@@ -361,6 +362,7 @@ public final class BattleAdvisor {
 
     private static void observe(Component message) {
         if (message.getContents() instanceof TranslatableContents translation) {
+            TrainerBattleTracker.message(translation.getKey(), translation.getArgs());
             field.observe(translation.getKey());
             observeMoveMessage(translation);
             observeEffect(translation);
