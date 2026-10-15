@@ -83,7 +83,7 @@ public final class CobblemonTeamAdvisor {
     }
 
     @SubscribeEvent
-    public static void onTrainerName(net.neoforged.neoforge.client.event.RenderNameTagEvent event) {
+    public static void onTrainerRendered(net.neoforged.neoforge.client.event.RenderLivingEvent.Post<?, ?> event) {
         TrainerWinPreview.render(event);
     }
 

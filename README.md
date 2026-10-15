@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.15.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.15.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -116,3 +116,7 @@ After a confirmed voluntary switch, another switch against the same opponent sti
 Each battle now writes a local `battle-logs/<timestamp>-<battle-uuid>.jsonl` file. Rows include mod version, battle ID, time and turn, starting party HP/stats/moves/PP, battle messages, observed health changes, switch-candidate forecasts, switch decisions/reasons, AUTO move choices and alternatives, submitted switches, and invalid choices. Repeated identical evaluations within a turn are suppressed; changed forecasts can be recorded. Rows flush immediately for live diagnosis. Closing a battle does not itself imply a win or loss; explicit outcome messages and the existing trainer win-rate CSV remain the outcome sources.
 
 Diagnostics only use already-received client data, record no ordinary chat, and make no server requests. Unavailable numeric estimates are JSON null. Old fights cannot be reconstructed retroactively. The new switching behavior and traces require a Minecraft restart; battle-model estimates still need live gameplay validation.
+
+### Trainer label rendering fix
+
+Trainer predictions render after the living entity, independently of the normal name-tag event, with Minecraft's nameplate orientation and attachment position. RCT trainers are identified by their registered `rctmod:trainer` entity type; their already-synced IDs are read from the loaded entity rather than an eagerly resolved optional-mod class. Computed labels are recorded at DEBUG level, and identity-read failures produce one warning per entity class. The range, local-only data use and prediction model are unchanged.

@@ -8,7 +8,6 @@ import com.cobblemon.mod.common.client.CobblemonClient;
 import com.cobblemon.mod.common.entity.npc.NPCEntity;
 import com.cobblemon.mod.common.pokemon.Pokemon;
 import com.mojang.logging.LogUtils;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -19,27 +18,19 @@ import java.util.UUID;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.world.entity.LivingEntity;
-import net.neoforged.neoforge.client.event.RenderNameTagEvent;
-import net.neoforged.neoforge.common.util.TriState;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.EntityAttachment;
+import net.neoforged.neoforge.client.event.RenderLivingEvent;
 
 final class TrainerWinPreview {
     private static final Map<UUID, String> LABELS = new HashMap<>();
     private static final Map<String, String> CACHE = new HashMap<>();
-    private static final Method TRAINER_ID = trainerIdMethod();
+    private static final Set<Class<?>> FAILED_IDENTITIES = new java.util.HashSet<>();
     private static Object level;
     private static String partyKey = "";
     private static int ticks;
 
     private TrainerWinPreview() { }
-
-    private static Method trainerIdMethod() {
-        try {
-            return Class.forName("com.gitlab.srcmc.rctmod.world.entities.TrainerMob", false,
-                    TrainerWinPreview.class.getClassLoader()).getMethod("getTrainerId");
-        } catch (ClassNotFoundException | NoSuchMethodException error) {
-            return null; // RCT is optional; exact-name bundled matches still work for Cobblemon NPCs.
-        }
-    }
 
     static void tick() {
         Minecraft client = Minecraft.getInstance();
@@ -91,20 +82,27 @@ final class TrainerWinPreview {
                 }
                 if (CACHE.size() >= 64) CACHE.clear();
                 CACHE.put(identity, label);
+                LogUtils.getLogger().debug("Trainer preview {}: {}", identity, label);
             }
             LABELS.put(entity.getUUID(), label);
         }
     }
 
+    private static boolean rctTrainer(LivingEntity entity) {
+        return BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()).toString().equals("rctmod:trainer");
+    }
+
     private static boolean trainer(LivingEntity entity) {
-        return entity instanceof NPCEntity && !TrainerRoster.preview(entity.getName().getString(), null).isEmpty() || TRAINER_ID != null && TRAINER_ID.getDeclaringClass().isInstance(entity);
+        return rctTrainer(entity) || entity instanceof NPCEntity && !TrainerRoster.preview(entity.getName().getString(), null).isEmpty();
     }
 
     private static String trainerId(LivingEntity entity) {
-        if (TRAINER_ID == null || !TRAINER_ID.getDeclaringClass().isInstance(entity)) return null;
+        if (!rctTrainer(entity)) return null;
         try {
-            return (String) TRAINER_ID.invoke(entity);
+            // Resolve against the already-loaded entity; optional mods can use a different class loader.
+            return (String) entity.getClass().getMethod("getTrainerId").invoke(entity);
         } catch (ReflectiveOperationException error) {
+            if (FAILED_IDENTITIES.add(entity.getClass())) LogUtils.getLogger().warn("Could not read nearby trainer identity", error);
             return "unknown";
         }
     }
@@ -137,19 +135,22 @@ final class TrainerWinPreview {
         return TrainerWinEstimator.estimate(BattleAdvisor.previewModel(party, foes, lead)).label();
     }
 
-    static void render(RenderNameTagEvent event) {
+    static void render(RenderLivingEvent.Post<?, ?> event) {
         Minecraft client = Minecraft.getInstance();
         if (client.player == null || client.options.hideGui || CobblemonClient.INSTANCE.getBattle() != null
-                || event.canRender() == TriState.FALSE || event.getEntity().isInvisible()
+                || event.getEntity().isInvisible()
                 || event.getEntity().distanceToSqr(client.player) > 24 * 24) return;
         String label = LABELS.get(event.getEntity().getUUID());
         if (label == null) return;
         var pose = event.getPoseStack();
         pose.pushPose();
         try {
-            pose.translate(0, event.getEntity().getBbHeight() + 0.85, 0);
+            var entity = event.getEntity();
+            var anchor = entity.getAttachments().getNullable(EntityAttachment.NAME_TAG, 0, entity.getViewYRot(event.getPartialTick()));
+            if (anchor == null) pose.translate(0, entity.getBbHeight() + 0.85, 0);
+            else pose.translate(anchor.x, anchor.y + 0.85, anchor.z);
             pose.mulPose(client.getEntityRenderDispatcher().cameraOrientation());
-            pose.scale(-0.025F, -0.025F, 0.025F);
+            pose.scale(0.025F, -0.025F, 0.025F);
             client.font.drawInBatch(label, -client.font.width(label) / 2.0F, 0, 0xFFFFFFAA, false,
                     pose.last().pose(), event.getMultiBufferSource(), Font.DisplayMode.NORMAL, 0x60000000, event.getPackedLight());
         } finally {
