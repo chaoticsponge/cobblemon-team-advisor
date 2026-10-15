@@ -55,15 +55,34 @@ final class BattleMatchupPolicy {
     static int survivalScore(double hp, double maxHp, double entryDamage, double incoming, double residual) {
         double remaining = hp - entryDamage;
         if (remaining <= 0) return -100;
-        if (remaining <= incoming || remaining <= incoming + Math.max(0, residual)) return -60;
-        return (int) Math.round(6 * remaining / maxHp
-                + 4 * Math.min(3, remaining / Math.max(1, incoming + residual)));
+        double cost = incoming + Math.max(0, residual);
+        double afterHit = remaining - cost;
+        if (afterHit <= 0) return -60;
+        return (int) Math.round(12 * remaining / maxHp + 18 * afterHit / maxHp
+                + 4 * Math.min(3, afterHit / Math.max(1, cost)));
+    }
+
+    static int matchupScore(double multiplier, double hp, double maxHp, double entryDamage,
+                            double incoming, double residual, double damageFraction) {
+        int health = survivalScore(hp, maxHp, entryDamage, incoming, residual);
+        if (health < 0) return health;
+        if (damageFraction <= 0) return -30; // A safe counter also needs a way to hurt the target.
+        int defence = multiplier == 0 ? 6 : multiplier <= 0.25 ? 5 : multiplier < 1 ? 4
+                : multiplier == 1 ? 3 : multiplier < 4 ? 2 : 1;
+        // Health and offence break ties within a defensive tier, never reverse immune > resistant > neutral.
+        int healthBonus = Math.max(0, Math.min(9, (int) Math.round(health * 9.0 / 42)));
+        int offenceBonus = (int) Math.round(9 * Math.min(1, damageFraction));
+        return defence * 20 + healthBonus + offenceBonus;
     }
 
     static double healthFraction(double value, double maxHp, boolean flat) {
         if (!Double.isFinite(value) || flat && (!Double.isFinite(maxHp) || maxHp <= 0)) return 1;
         // Public opponent HP is already 0..1 even when maxHp contains the real HP stat.
         return Math.max(0, Math.min(1, flat ? value / maxHp : value));
+    }
+
+    static boolean survivesAction(double hp, double maxHp, double before, double healing, double recoil) {
+        return hp > before && Math.min(maxHp, hp - before + healing) > recoil;
     }
 
     static boolean normalHitKo(double minimumDamage, double hp, boolean knownHp) {
@@ -88,8 +107,8 @@ final class BattleMatchupPolicy {
                             double koChance, boolean canFinish, boolean unknownHp) {
         // KO probability dominates planning/PP effects. Remaining PP only determines legality.
         double expected = canFinish ? Math.max(0, damageFraction * accuracy) : 0;
-        double damageScore = unknownHp ? 100 * Math.log1p(expected) : 100 * Math.min(1, expected);
-        return (unknownHp || !canFinish ? 0 : 1000 * koChance)
+        double damageScore = unknownHp ? 100 * Math.log1p(expected) : 100 * expected / (1 + expected);
+        return (unknownHp || !canFinish ? 0 : koChance >= 1 ? 2000 : 1000 * koChance)
                 + damageScore
                 + Math.max(-2, Math.min(2, forecast / 50)) + attackScore * 0.15;
     }

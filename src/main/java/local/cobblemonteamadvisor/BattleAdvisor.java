@@ -656,7 +656,6 @@ public final class BattleAdvisor {
                 && own.status.isEmpty() && !hasType(own, "poison") && !hasType(own, "steel")
                 && !List.of("immunity", "purifyingsalt", "comatose", "poisonheal", "magicguard").contains(own.ability);
         if (entryPoison) residual = Math.max(residual, own.maxHp / 8);
-        int defence = -BattleMatchupPolicy.threatScore(worstType);
         double bestDamage = 0;
         for (Move move : pokemon.getMoveSet()) {
             if (move != null && move.getCurrentPp() > 0 && damaging(move.getTemplate())
@@ -665,16 +664,17 @@ public final class BattleAdvisor {
                         move.getTemplate().getEffectiveElementalType(pokemon), 0.85D));
             }
         }
-        int score = defence + BattleMatchupPolicy.survivalScore(own.hp, own.maxHp, entry, incoming, residual)
-                + (int) Math.round(Math.min(2, bestDamage / Math.max(1, foe.hp)) * 2);
-        if (bestDamage == 0) score -= 30;
-        if (entryPoison) score -= 4;
-        boolean survives = own.hp > entry + incoming + Math.max(0, residual);
+        int score = BattleMatchupPolicy.matchupScore(worstType, own.hp, own.maxHp, entry, incoming, residual,
+                bestDamage / Math.max(1, foe.hp));
+        double afterHit = Math.max(0, own.hp - entry - incoming - Math.max(0, residual));
+        boolean survives = afterHit > 0;
         String reason = own.hp <= entry ? "entry hazards would KO" : !survives ? "risks KO on next hit"
-                : !hasDamagingMove && !moves.isEmpty() ? "no damaging moves in known set"
+                : bestDamage == 0 ? "cannot damage the target" : !hasDamagingMove && !moves.isEmpty() ? "no damaging moves in known set"
                 : worstType == 0 ? "immune to damaging moves" : worstType < 1 ? "resists enemy coverage" : "survives next hit";
         if (!threat.isEmpty() && worstType >= 1) reason += " (" + threat + ")";
         if (entry > 0) reason += "; entry cost " + Math.round(100 * entry / own.maxHp) + "%";
+        if (survives) reason += "; HP " + Math.round(100 * own.hp / own.maxHp) + "% → "
+                + Math.round(100 * afterHit / own.maxHp) + "% after hit";
         return new Matchup(score, survives, incoming, entry, reason);
     }
 
@@ -891,7 +891,7 @@ public final class BattleAdvisor {
         if (id(move.getName()).equals("struggle")) recoil = own.maxHp / 4;
         double drain = Math.min(own.maxHp - own.hp, Math.min(foe.hp, damage) * fraction(effect, "drain"));
         if (foe.ability.equals("liquidooze")) { recoil += drain; drain = 0; }
-        firstKo &= recoil < own.hp;
+        firstKo &= BattleMatchupPolicy.survivesAction(own.hp, own.maxHp, 0, drain, recoil);
         double score = BattleMatchupPolicy.attackScore(damage / Math.max(1, foe.hp), accuracy, ko, firstKo,
                 drain / own.maxHp, recoil / own.maxHp, before >= own.hp, recoil >= own.hp);
         if ((id(move.getName()).equals("rapidspin") || id(move.getName()).equals("mortalspin"))
@@ -906,7 +906,8 @@ public final class BattleAdvisor {
         if (drain > 0) reason += "; heals " + Math.round(100 * drain / own.maxHp) + "%";
         if (!unknownHp && !forecast.next().isEmpty()) reason += "; then " + forecast.next();
         boolean needsCharge = charging(own, move) && !moveState.hasEffect(own.uuid(), "charging");
-        boolean canFinish = before < own.hp && recoil < own.hp && !own.status.equals("slp") && !own.status.equals("frz")
+        boolean canFinish = BattleMatchupPolicy.survivesAction(own.hp, own.maxHp, before, drain, recoil)
+                && !own.status.equals("slp") && !own.status.equals("frz")
                 && (!needsCharge || own.hp > incoming + before + Math.max(0, residual(own)));
         double chance = canHitNow && !unknownHp ? koChance(own, foe, move, tile.getElementalType(), accuracy) : 0;
         double actionChance = own.status.equals("par") ? 0.75 : 1;

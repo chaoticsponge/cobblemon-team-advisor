@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.12.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.12.2.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -84,3 +84,9 @@ The planner caps damage to remaining HP before multiplying by hit probability, p
 Active and benched Pokémon use the same matchup score; benched Pokémon no longer get an extra planning bonus. Safe, accurate immediate KOs take precedence over voluntary switches even if an enemy could use a harmless priority move first. Small incoming hits do not justify switching for a type-score improvement alone.
 
 After a confirmed automatic voluntary switch, the incoming Pokémon must use a move before another routine switch against the same opponent. Emergency switches remain possible if it risks fainting, or cannot damage the target and the replacement can. An opponent change allows a fresh counter-switch, and forced replacements and rejected choices do not create the lock. State resets with each battle and is tracked separately for each incoming Pokémon.
+
+### Counter priorities and current HP
+
+Replacement candidates must survive entry hazards, the expected incoming hit and harmful residual damage, and have an effective damaging move. Among viable candidates, defensive tiers are ordered: immunity, quarter resistance, resistance, neutral, weakness, then double weakness. Health and outgoing damage break ties within a tier; extra offensive power cannot reverse those defensive priorities.
+
+The health contribution includes current HP, HP left after entry/incoming damage and remaining hit capacity. Switch hints show current and estimated post-hit HP. Safe immediate KOs and the switch-loop protection still take precedence over unnecessary voluntary swaps. Attacks continue to compare their fully modified damage rather than their type name: conditional moves such as Brine use their doubled power only when the target is at half HP or below, then apply stats, STAB, effectiveness and other known modifiers.

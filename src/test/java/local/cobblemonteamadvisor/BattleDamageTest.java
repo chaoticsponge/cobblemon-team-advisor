@@ -15,6 +15,13 @@ final class BattleDamageTest {
         check(BattleDamageModifiers.power(user("", "aguavberry", "", 1), neutral, acrobatics) == 55, "Holding a berry must prevent the Acrobatics boost");
         check(BattleDamageModifiers.power(user("", "", "", 0.03), neutral, move("flail", "normal", 0, false)) == 200,
                 "Flail must use its actual low-health power instead of a generic variable-power fallback");
+        var brine = move("brine", "water", 65, true);
+        check(BattleDamageModifiers.power(neutral, user("", "", "", 0.51), brine) == 65,
+                "Brine above half health must use 65 power and lose to an otherwise equal 70-power attack");
+        check(BattleDamageModifiers.power(neutral, user("", "", "", 0.5), brine) == 130,
+                "Brine at half health must use its doubled 130 power");
+        check(BattleDamageModifiers.power(neutral, user("", "", "", 0.49), brine) == 130,
+                "Brine below half health must keep the doubled power");
         check(BattleDamageModifiers.powerFactor(user("technician", "", "", 1), move("acrobatics", "flying", 110, false, "contact")) == 1,
                 "Technician must test effective power and not boost item-free Acrobatics again");
         check(BattleDamageModifiers.powerFactor(user("technician", "", "", 1), move("feint", "normal", 30, false)) == 1.5, "Technician must boost eligible low-power moves");
@@ -66,6 +73,23 @@ final class BattleDamageTest {
                         > BattleMatchupPolicy.moveValue(0, 0, 0.4, 1, 0.0, true, false),
                 "Selection must compare final damage, so Normal coverage can still win when it really deals more damage");
 
+        check(attackValue(40 * TypeMatchups.multiplier("fire", List.of("grass"))) > attackValue(40),
+                "A 40-power Fire move with a weakness bonus must beat equal Normal power");
+        check(attackValue(50) > attackValue(40 * TypeMatchups.multiplier("fire", List.of("normal"))),
+                "Neutral 50-power Normal must beat neutral 40-power Fire when all other modifiers match");
+        check(attackValue(70) > attackValue(BattleDamageModifiers.power(neutral, user("", "", "", 0.51), brine)),
+                "An otherwise equal 70-power Normal move must beat unboosted Brine");
+        check(attackValue(BattleDamageModifiers.power(neutral, user("", "", "", 0.5), brine)) > attackValue(70),
+                "Boosted Brine must beat the same 70-power Normal move");
+        check(attackValue(400) > attackValue(200), "Overkill damage must still break ties between equally reliable attacks");
+        check(BattleMatchupPolicy.moveValue(-1000, 0, 1, 1, 1.0, true, false)
+                        > BattleMatchupPolicy.moveValue(1000, 0, 1000, 0.99, 0.99, true, false),
+                "A true 100% normal-hit KO must stay ahead of a larger hit that can miss");
+        check(!BattleMatchupPolicy.survivesAction(30, 100, 20, 0, 15),
+                "Incoming damage and recoil must be combined when deciding if a low-health finisher is safe");
+        check(BattleMatchupPolicy.survivesAction(40, 100, 20, 0, 15), "Enough actual remaining HP must permit the same recoil move");
+        check(BattleMatchupPolicy.survivesAction(5, 100, 0, 20, 10), "Draining damage may restore enough HP to survive recoil");
+
         var lastPp = new BattlePlanner.Action("finish", 120, 1, 0, 1, BattlePlanner.Effect.NONE, false, false, true);
         var fullPp = new BattlePlanner.Action("finish", 120, 1, 0, 15, BattlePlanner.Effect.NONE, false, false, true);
         var own = new BattlePlanner.Combatant(100, 100, 100, 0, 0, "", List.of(lastPp));
@@ -88,6 +112,10 @@ final class BattleDamageTest {
             check(effects.getAsJsonObject("flamethrower").get("secondary").getAsBoolean(), "Packaged metadata must describe Sheer Force eligibility");
         } catch (IOException error) { throw new AssertionError(error); }
         System.out.println("Shared KO-first ranking, PP legality, hit chance and damage-modifier checks passed.");
+    }
+
+    private static double attackValue(double damage) {
+        return BattleMatchupPolicy.moveValue(0, 0, damage / 100, 1, 0.0, true, false);
     }
 
     private static BattleDamageModifiers.User user(String ability, String item, String status, double hp) {
