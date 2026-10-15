@@ -13,6 +13,7 @@ import com.cobblemon.mod.common.net.messages.client.battle.BattleHealthChangePac
 import com.cobblemon.mod.common.client.gui.battle.BattleGUI;
 import com.cobblemon.mod.common.battles.MoveTarget;
 import com.cobblemon.mod.common.api.types.ElementalType;
+import com.cobblemon.mod.common.api.types.ElementalTypes;
 import com.cobblemon.mod.common.battles.ShowdownPokemon;
 import com.cobblemon.mod.common.client.CobblemonClient;
 import com.cobblemon.mod.common.client.battle.ClientBattle;
@@ -627,7 +628,7 @@ public final class BattleAdvisor {
             if (!damaging(move)) continue;
             hasDamagingMove = true;
             double damage = damage(foe, own, move, move.getElementalType(), 1.0D);
-            worstType = Math.max(worstType, multiplier(foe, own, move.getElementalType()));
+            worstType = Math.max(worstType, multiplier(foe, own, move, move.getElementalType()));
             if (damage > incoming) {
                 incoming = damage;
                 threat = move.getElementalType().getName();
@@ -681,7 +682,11 @@ public final class BattleAdvisor {
         if ((name.equals("thunder") || name.equals("hurricane")) && field.weather.equals("raindance")) return 1;
         if (name.equals("blizzard") && (field.weather.equals("hail") || field.weather.equals("snow"))) return 1;
         double accuracy = (name.equals("thunder") || name.equals("hurricane")) && field.weather.equals("sunnyday") ? 50 : move.getAccuracy();
-        return BattleMatchupPolicy.accuracy(accuracy, user.stage(Stats.ACCURACY), target.stage(Stats.EVASION));
+        double modifier = 1;
+        if (user.ability.equals("hustle") && move.getDamageCategory() == DamageCategories.INSTANCE.getPHYSICAL()) modifier *= 0.8;
+        if (user.ability.equals("compoundeyes")) modifier *= 1.3;
+        if (user.item.endsWith("widelens")) modifier *= 1.1;
+        return BattleMatchupPolicy.accuracy(accuracy, user.stage(Stats.ACCURACY), target.stage(Stats.EVASION), modifier);
     }
 
     private static BattlePlanner.Action action(Fighter user, Fighter target, MoveTemplate move, ElementalType type, int pp) {
@@ -717,7 +722,7 @@ public final class BattleAdvisor {
         return new BattlePlanner.Action(name, unknownRaidHp(target) ? 0 : damage(user, target, move, type, 0.925D), moveAccuracy(user, target, move),
                 priority(user, move), pp, modeled, Set.of("firstimpression", "fakeout", "matblock").contains(name),
                 Set.of("gigatonhammer", "bloodmoon").contains(name), move.getDamageCategory() == DamageCategories.INSTANCE.getPHYSICAL(),
-                user.ability.equals("infiltrator") || effect.has("sound"), effect.has("recharge"), charging(user, move));
+                user.ability.equals("infiltrator") || effect.has("sound"), effect.has("recharge"), charging(user, move), effect.has("breaksProtect"));
     }
 
     private static List<BattlePlanner.Action> actions(Fighter user, Fighter target, BattleMoveSelection selection) {
@@ -843,7 +848,7 @@ public final class BattleAdvisor {
         double damage = damage(own, foe, move, tile.getElementalType(), 0.925D);
         double minimum = damage(own, foe, move, tile.getElementalType(), 0.85D);
         boolean unknownHp = unknownRaidHp(foe);
-        boolean canHitNow = !moveState.protectedNow(foe.uuid())
+        boolean canHitNow = (!moveState.protectedNow(foe.uuid()) || effects(move).has("breaksProtect"))
                 && (!charging(own, move) || moveState.hasEffect(own.uuid(), "charging"))
                 && (!moveState.hasEffect(foe.uuid(), "substitute") || own.ability.equals("infiltrator") || effects(move).has("sound"));
         boolean ko = canHitNow && BattleMatchupPolicy.normalHitKo(minimum, foe.hp, !unknownHp);
@@ -851,11 +856,12 @@ public final class BattleAdvisor {
         JsonObject effect = effects(move);
         double recoil = Math.min(foe.hp, damage) * fraction(effect, "recoil");
         if (own.ability.equals("rockhead") || own.ability.equals("magicguard")) recoil = 0;
-        if (own.item.endsWith("lifeorb") && !own.ability.equals("magicguard") && !own.ability.equals("sheerforce")) recoil += own.maxHp / 10;
+        if (own.item.endsWith("lifeorb") && !own.ability.equals("magicguard") && !(own.ability.equals("sheerforce") && effect.has("secondary"))) recoil += own.maxHp / 10;
         if (effect.has("selfdestruct")) recoil = own.hp;
         if (id(move.getName()).equals("struggle")) recoil = own.maxHp / 4;
         double drain = Math.min(own.maxHp - own.hp, Math.min(foe.hp, damage) * fraction(effect, "drain"));
         if (foe.ability.equals("liquidooze")) { recoil += drain; drain = 0; }
+        firstKo &= recoil < own.hp;
         double score = BattleMatchupPolicy.attackScore(damage / Math.max(1, foe.hp), accuracy, ko, firstKo,
                 drain / own.maxHp, recoil / own.maxHp, before >= own.hp, recoil >= own.hp);
         if ((id(move.getName()).equals("rapidspin") || id(move.getName()).equals("mortalspin"))
@@ -870,8 +876,14 @@ public final class BattleAdvisor {
         if (drain > 0) reason += "; heals " + Math.round(100 * drain / own.maxHp) + "%";
         if (!unknownHp && !forecast.next().isEmpty()) reason += "; then " + forecast.next();
         boolean canFinish = before < own.hp && recoil < own.hp && !own.status.equals("slp") && !own.status.equals("frz");
-        double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damage / Math.max(1, foe.maxHp),
-                accuracy * (own.status.equals("par") ? 0.75 : 1), ko, canFinish, unknownHp);
+        double chance = canHitNow && !unknownHp ? koChance(own, foe, move, tile.getElementalType(), accuracy) : 0;
+        double actionChance = own.status.equals("par") ? 0.75 : 1;
+        if (chance > 0 && !ko) reason = "normal-hit KO chance " + Math.round(100 * chance) + "%; " + reason;
+        double damagePerTurn = damage;
+        if (moveState.protectedNow(foe.uuid()) && !effect.has("breaksProtect")) damagePerTurn = 0;
+        if (charging(own, move) && !moveState.hasEffect(own.uuid(), "charging")) damagePerTurn /= 2;
+        double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damagePerTurn / Math.max(1, foe.maxHp),
+                accuracy * actionChance, chance * actionChance, canFinish, unknownHp);
         return new MoveAdvice(value, ko, firstKo, reason, accuracy);
     }
 
@@ -969,16 +981,40 @@ public final class BattleAdvisor {
     }
 
     private static double damage(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type, double roll) {
-        double result = rawDamage(attacker, defender, move, type, roll)
+        return damage(attacker, defender, move, type, roll, 0);
+    }
+
+    private static double damage(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type, double roll, int hits) {
+        double result = rawDamage(attacker, defender, move, type, roll, hits)
                 * observations.damageFactor(new BattleObservations.DamageKey(attacker.uuid(), defender.uuid(), id(move.getName()), damageContext(attacker, defender)));
-        return result;
+        // Calibration cannot remove an intact Sash/Sturdy survival guarantee.
+        return protectedDamage(result, attacker, defender, hits > 0 ? hits : effects(move).has("multihit") ? 2 : 1);
     }
 
     private static double rawDamage(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type, double roll) {
+        return rawDamage(attacker, defender, move, type, roll, 0);
+    }
+
+    private static BattleDamageModifiers.User damageUser(Fighter user) {
+        return new BattleDamageModifiers.User(user.ability, user.item, user.status, user.hp / user.maxHp, field.weather);
+    }
+
+    private static BattleDamageModifiers.Move damageMove(MoveTemplate move, ElementalType type, double power) {
+        return new BattleDamageModifiers.Move(id(move.getName()), type.showdownId(), move.getElementalType().showdownId(), power,
+                move.getDamageCategory() == DamageCategories.INSTANCE.getSPECIAL(), effects(move).keySet());
+    }
+
+    private static double rawDamage(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type, double roll, int forcedHits) {
         if (!damaging(move)) return 0;
-        double effectiveness = multiplier(attacker, defender, type);
-        if (effectiveness == 0) return 0;
         JsonObject effect = effects(move);
+        String moveId = id(move.getName());
+        type = moveType(attacker, move, type);
+        double typeEffectiveness = typeEffectiveness(defender, type, moveId);
+        double effectiveness = BattleMatchupPolicy.effectiveMultiplier(typeEffectiveness, type.showdownId(),
+                field.gravity && defender.ability.equals("levitate") ? "" : defender.ability, attacker.ability);
+        if (defender.ability.equals("wonderguard") && typeEffectiveness <= 1 && !bypassesAbility(attacker)) return 0;
+        if (BattleDamageModifiers.immune(defender.ability, damageMove(move, type, move.getPower()), bypassesAbility(attacker))) return 0;
+        if (effectiveness == 0) return 0;
         if (effect.has("damage")) {
             JsonElement fixed = effect.get("damage");
             double result = fixed.getAsString().equals("level") ? attacker.level() : fixed.getAsDouble();
@@ -988,7 +1024,6 @@ public final class BattleAdvisor {
             if (defender.ability.equals("sturdy") && !bypassesAbility(attacker)) return 0;
             return attacker.level() >= defender.level() ? protectedDamage(defender.hp, attacker, defender, 1) : 0;
         }
-        String moveId = id(move.getName());
         if (List.of("superfang", "naturesmadness", "ruination").contains(moveId)) return Math.max(1, defender.hp / 2);
         if (moveId.equals("endeavor")) return Math.max(0, defender.hp - attacker.hp);
         if (List.of("counter", "mirrorcoat", "metalburst").contains(moveId)) return 0; // Reactive damage is not guaranteed.
@@ -1001,11 +1036,25 @@ public final class BattleAdvisor {
             power = roll == 1 ? 120 : 40; // Conservative bounds for other variable-power attacks.
         }
         String name = id(move.getName());
-        if ((name.equals("hex") || name.equals("venoshock") || name.equals("infernalparade") || name.equals("barbbarrage"))
-                && !defender.status.isEmpty()) power *= 2;
-        if (name.equals("facade") && !attacker.status.isEmpty()) power *= 2;
-        if (name.equals("brine") && defender.hp <= defender.maxHp / 2) power *= 2;
-        if (name.equals("eruption") || name.equals("waterspout") || name.equals("dragonenergy")) power *= attacker.hp / attacker.maxHp;
+        var user = damageUser(attacker);
+        var target = damageUser(defender);
+        power = BattleDamageModifiers.power(user, target, damageMove(move, type, power));
+        if (name.equals("weatherball") && !field.weather.isEmpty()) power *= 2;
+        if (name.equals("gyroball")) power = Math.min(150, Math.floor(25 * defender.stat(Stats.SPEED) / attacker.stat(Stats.SPEED)) + 1);
+        if (name.equals("electroball")) {
+            double ratio = attacker.stat(Stats.SPEED) / defender.stat(Stats.SPEED);
+            power = ratio >= 4 ? 150 : ratio >= 3 ? 120 : ratio >= 2 ? 80 : ratio >= 1 ? 60 : 40;
+        }
+        if (name.equals("storedpower") || name.equals("powertrip")) {
+            int boosts = 0;
+            for (Stats stat : Stats.values()) if (stat != Stats.HP) boosts += Math.max(0, attacker.stage(stat));
+            power = 20 + 20 * boosts;
+        }
+        if (attacker.own != null && (name.equals("return") || name.equals("frustration"))) {
+            power = Math.max(1, Math.floor((name.equals("return") ? attacker.own.getFriendship() : 255 - attacker.own.getFriendship()) * 2.0 / 5));
+        }
+        var moveInfo = damageMove(move, type, power);
+        power *= BattleDamageModifiers.powerFactor(user, moveInfo);
         boolean special = move.getDamageCategory() == DamageCategories.INSTANCE.getSPECIAL();
         double attack = attacker.stat(special ? Stats.SPECIAL_ATTACK : Stats.ATTACK);
         if (name.equals("facade") && attacker.status.equals("brn") && !attacker.ability.equals("guts")) attack *= 2;
@@ -1013,18 +1062,19 @@ public final class BattleAdvisor {
         if (name.equals("foulplay")) attack = defender.stat(Stats.ATTACK);
         boolean physicalDefence = !special || name.equals("psyshock") || name.equals("psystrike") || name.equals("secretsword");
         Stats defenceStat = physicalDefence ? Stats.DEFENCE : Stats.SPECIAL_DEFENCE;
-        double defence = defender.stat(defenceStat);
+        double defence = defender.stat(defenceStat) * BattleDamageModifiers.defenceFactor(target, physicalDefence, bypassesAbility(attacker));
         boolean critical = effect.has("guaranteedCrit") && (bypassesAbility(attacker)
                 || !Set.of("battlearmor", "shellarmor").contains(defender.ability));
         if (critical && defender.stage(defenceStat) > 0) defence /= BattleMatchupPolicy.stageMultiplier(defender.stage(defenceStat));
         Stats attackStat = special ? Stats.SPECIAL_ATTACK : Stats.ATTACK;
         if (critical && attacker.stage(attackStat) < 0) attack /= BattleMatchupPolicy.stageMultiplier(attacker.stage(attackStat));
+        attack *= BattleDamageModifiers.attackFactor(user, moveInfo);
         double stab = hasType(attacker, type.showdownId()) ? attacker.ability.equals("adaptability") ? 2 : 1.5D : 1;
-        double hits = 1;
-        if (effect.has("multihit")) {
+        double hits = forcedHits > 0 ? forcedHits : 1;
+        if (forcedHits <= 0 && effect.has("multihit")) {
             JsonElement multi = effect.get("multihit");
             hits = multi.isJsonArray() ? (attacker.ability.equals("skilllink") || roll == 1 ? multi.getAsJsonArray().get(1).getAsDouble()
-                    : roll == 0.85D ? multi.getAsJsonArray().get(0).getAsDouble() : 3) : multi.getAsDouble();
+                    : roll == 0.85D ? multi.getAsJsonArray().get(0).getAsDouble() : attacker.item.endsWith("loadeddice") ? 4.5 : 3.1) : multi.getAsDouble();
         }
         double result = (((2.0D * attacker.level() / 5 + 2) * power * attack / defence / 50) + 2)
                 * stab * effectiveness * roll * hits;
@@ -1038,10 +1088,25 @@ public final class BattleAdvisor {
             result *= activePokemon().size() > 2 ? 2.0 / 3 : 0.5;
         }
         if (attacker.item.endsWith("lifeorb")) result *= 1.3D;
-        boolean bypass = bypassesAbility(attacker);
-        if ((defender.ability.equals("multiscale") || defender.ability.equals("shadowshield"))
-                && defender.hp >= defender.maxHp && (!bypass || defender.ability.equals("shadowshield"))) result *= 0.5D;
+        result *= BattleDamageModifiers.damageFactor(user, target, moveInfo, typeEffectiveness, bypassesAbility(attacker));
         return protectedDamage(result, attacker, defender, hits);
+    }
+
+    private static double koChance(Fighter own, Fighter foe, MoveTemplate move, ElementalType type, double accuracy) {
+        JsonElement multihit = effects(move).get("multihit");
+        if (multihit == null || !multihit.isJsonArray()) {
+            return BattleMatchupPolicy.normalKoChance(damage(own, foe, move, type, 0.85), damage(own, foe, move, type, 1), foe.hp, accuracy);
+        }
+        int min = multihit.getAsJsonArray().get(0).getAsInt(), max = multihit.getAsJsonArray().get(1).getAsInt();
+        if (own.ability.equals("skilllink")) min = max;
+        else if (own.item.endsWith("loadeddice")) min = Math.max(min, 4);
+        double result = 0;
+        for (int hits = min; hits <= max; hits++) {
+            double weight = min == 2 && max == 5 ? hits <= 3 ? 0.35 : 0.15 : 1.0 / (max - min + 1);
+            result += weight * BattleMatchupPolicy.normalKoChance(damage(own, foe, move, type, 0.85, hits),
+                    damage(own, foe, move, type, 1, hits), foe.hp, accuracy);
+        }
+        return result;
     }
 
     private static boolean bypassesAbility(Fighter attacker) {
@@ -1054,16 +1119,38 @@ public final class BattleAdvisor {
         return Math.max(0, result);
     }
 
-    private static double multiplier(Fighter attacker, Fighter defender, ElementalType type) {
-        double base = CobblemonTeamAdvisor.moveMultiplier(type, defender.types);
-        if (field.gravity && type.showdownId().equals("ground") && hasType(defender, "flying")) {
-            List<ElementalType> groundedTypes = defender.types.stream().filter(t -> !t.showdownId().equals("flying")).toList();
-            base = CobblemonTeamAdvisor.moveMultiplier(type, groundedTypes);
-        }
-        String ability = field.gravity && defender.ability.equals("levitate") ? "" : defender.ability;
-        double result = BattleMatchupPolicy.effectiveMultiplier(base, type.showdownId(), ability, attacker.ability);
-        if (ability.equals("wonderguard") && result <= 1 && !bypassesAbility(attacker)) return 0;
-        return result;
+    private static ElementalType moveType(Fighter attacker, MoveTemplate move, ElementalType type) {
+        String moveId = id(move.getName());
+        JsonObject effect = effects(move);
+        boolean changesType = BattleDamageModifiers.changesType(moveId);
+        if (changesType) type = ElementalTypes.getOrException(BattleDamageModifiers.type(type.showdownId(), attacker.ability));
+        if (attacker.ability.equals("liquidvoice") && effect.has("sound")) type = ElementalTypes.WATER;
+        if (moveId.equals("weatherball")) type = switch (field.weather) {
+            case "sunnyday" -> ElementalTypes.FIRE;
+            case "raindance" -> ElementalTypes.WATER;
+            case "sandstorm" -> ElementalTypes.ROCK;
+            case "hail", "snow" -> ElementalTypes.ICE;
+            default -> type;
+        };
+        return type;
+    }
+
+    private static double multiplier(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type) {
+        type = moveType(attacker, move, type);
+        double base = typeEffectiveness(defender, type, id(move.getName()));
+        if (BattleDamageModifiers.immune(defender.ability, damageMove(move, type, move.getPower()), bypassesAbility(attacker))) return 0;
+        if (defender.ability.equals("wonderguard") && base <= 1 && !bypassesAbility(attacker)) return 0;
+        return BattleMatchupPolicy.effectiveMultiplier(base, type.showdownId(),
+                field.gravity && defender.ability.equals("levitate") ? "" : defender.ability, attacker.ability);
+    }
+
+    private static double typeEffectiveness(Fighter defender, ElementalType type, String move) {
+        List<ElementalType> types = field.gravity && type.showdownId().equals("ground")
+                ? defender.types.stream().filter(t -> !t.showdownId().equals("flying")).toList() : defender.types;
+        double base = CobblemonTeamAdvisor.moveMultiplier(type, types);
+        if (move.equals("freezedry") && hasType(defender, "water")) base *= 4;
+        if (move.equals("flyingpress")) base *= CobblemonTeamAdvisor.moveMultiplier(ElementalTypes.FLYING, defender.types);
+        return base;
     }
 
     private static double entryDamage(Fighter own) {

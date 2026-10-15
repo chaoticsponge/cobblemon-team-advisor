@@ -42,10 +42,14 @@ final class BattleMatchupPolicy {
     }
 
     static double accuracy(double accuracy, int attackerStage, int defenderStage) {
+        return accuracy(accuracy, attackerStage, defenderStage, 1);
+    }
+
+    static double accuracy(double accuracy, int attackerStage, int defenderStage, double modifier) {
         if (accuracy <= 0 || accuracy > 100) return 1;
         int stage = Math.max(-6, Math.min(6, attackerStage - defenderStage));
-        double modifier = stage >= 0 ? (3.0D + stage) / 3 : 3.0D / (3 - stage);
-        return Math.min(1, accuracy / 100 * modifier);
+        double stageModifier = stage >= 0 ? (3.0D + stage) / 3 : 3.0D / (3 - stage);
+        return Math.min(1, accuracy / 100 * stageModifier * modifier);
     }
 
     static int survivalScore(double hp, double maxHp, double entryDamage, double incoming, double residual) {
@@ -66,11 +70,28 @@ final class BattleMatchupPolicy {
         return knownHp && hp > 0 && minimumDamage >= hp;
     }
 
+    static double normalKoChance(double minimum, double maximum, double hp, double accuracy) {
+        if (hp <= 0 || maximum < hp) return 0;
+        if (minimum >= hp) return accuracy;
+        int lethal = 0;
+        for (int roll = 0; roll < 16; roll++) if (minimum + (maximum - minimum) * roll / 15 >= hp) lethal++;
+        return accuracy * lethal / 16;
+    }
+
     static double moveValue(double forecast, double attackScore, double damageFraction, double accuracy,
                             boolean normalKo, boolean canFinish, boolean unknownHp) {
-        // Never truncate raid damage at an invented species-sized health pool.
-        if (unknownHp) return forecast / 20 + damageFraction * accuracy + attackScore * 0.15;
-        return forecast / 20 + attackScore * 0.15 + (normalKo && canFinish ? 8 * accuracy : 0);
+        return moveValue(forecast, attackScore, damageFraction, accuracy,
+                normalKo ? accuracy : 0, canFinish, unknownHp);
+    }
+
+    static double moveValue(double forecast, double attackScore, double damageFraction, double accuracy,
+                            double koChance, boolean canFinish, boolean unknownHp) {
+        // KO probability dominates planning/PP effects. Remaining PP only determines legality.
+        double expected = canFinish ? Math.max(0, damageFraction * accuracy) : 0;
+        double damageScore = 5 * Math.log1p(expected);
+        return (unknownHp || !canFinish ? 0 : 1000 * koChance)
+                + (unknownHp ? damageScore : Math.min(5, damageScore))
+                + Math.max(-2, Math.min(2, forecast / 50)) + attackScore * 0.15;
     }
 
     static double attackScore(double damageFraction, double accuracy, boolean ko, boolean firstKo,

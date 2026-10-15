@@ -13,7 +13,12 @@ final class BattlePlanner {
         static final Effect NONE = new Effect(0, 0, 0, 1, 1, 1, 0, "", false, false);
     }
     record Action(String id, double damage, double accuracy, int priority, int pp, Effect effect,
-                  boolean opener, boolean cooldown, boolean physical, boolean bypassSubstitute, boolean recharge, boolean charging) {
+                  boolean opener, boolean cooldown, boolean physical, boolean bypassSubstitute, boolean recharge, boolean charging,
+                  boolean breaksProtect) {
+        Action(String id, double damage, double accuracy, int priority, int pp, Effect effect,
+               boolean opener, boolean cooldown, boolean physical, boolean bypassSubstitute, boolean recharge, boolean charging) {
+            this(id, damage, accuracy, priority, pp, effect, opener, cooldown, physical, bypassSubstitute, recharge, charging, false);
+        }
         Action(String id, double damage, double accuracy, int priority, int pp, Effect effect,
                boolean opener, boolean cooldown, boolean physical) {
             this(id, damage, accuracy, priority, pp, effect, opener, cooldown, physical, false, false, false);
@@ -140,10 +145,13 @@ final class BattlePlanner {
         if (effect.substitute && user.substitute <= 0 && user.hp > own.maxHp / 4) {
             user.hp -= own.maxHp / 4; user.substitute = own.maxHp / 4;
         }
-        double damage = target.protectedTurn ? 0 : action.damage * user.attack / target.defence * chance
-                * (user.newlyBurned && action.physical ? 0.5 : 1);
-        double dealt = Math.min(Math.max(0, target.hp), damage);
+        if (action.breaksProtect) target.protectedTurn = false;
         boolean hadSubstitute = target.substitute > 0 && !action.bypassSubstitute;
+        double onHit = target.protectedTurn ? 0 : action.damage * user.attack / target.defence
+                * (user.newlyBurned && action.physical ? 0.5 : 1);
+        // Excess damage only happens on a hit; a 50%-accurate overkill must not become a certain KO.
+        double damage = Math.min(hadSubstitute ? target.substitute : target.hp, onHit) * chance;
+        double dealt = Math.min(Math.max(0, target.hp), damage);
         if (hadSubstitute) {
             target.substitute = Math.max(0, target.substitute - damage);
             dealt = 0; // A broken substitute does not pass excess damage to its owner.

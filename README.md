@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.11.2.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.12.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 
@@ -70,3 +70,11 @@ Messages are added only to the local client's chat, with no chat packets or broa
 ### Battle health accuracy
 
 Opponent health values are already fractions even when Cobblemon supplies an absolute maximum HP stat. The advisor uses those fractions directly, divides only flat HP, and applies the same conversion to observed damage. It uses the synced maximum HP when available and the live battle aspects for regional-form stats, typing, moves and raid detection. This prevents false KO labels and priority-move finishing bonuses against healthy opponents.
+
+### KO-first move selection
+
+Trainer, wild and raid battles share one damage calculation and move-ranking policy. Estimated normal-hit KO probability takes precedence over two-turn planning benefits, then expected damage and battle consequences break ties. Current PP determines whether moves can be used or repeated; there is no reward for saving PP or an available opening move. Accuracy, turn order, recoil, immunities, charging and legal move restrictions still apply.
+
+The calculator combines attack/defence stats, STAB, weaknesses/resistances, known abilities, items, field conditions and move-specific power. Added modifiers cover low-power/contact/punch/bite/pulse/slicing/sound/secondary-effect boosts, low-HP starter abilities, type-converting abilities, defensive damage reductions, Hustle, Compound Eyes, and variable-power moves including Acrobatics. Multi-hit KO estimates use hit-count probabilities, Skill Link and Loaded Dice. Random critical hits do not contribute to normal-hit KO odds. Feint and other protection-breaking moves can bypass Protect in the planner.
+
+The planner caps damage to remaining HP before multiplying by hit probability, preventing inaccurate overkill from becoming a certain knockout. Detected raids with hidden shared HP use uncapped expected damage and survival advice without false KO claims. Hidden enemy stats, server-specific mechanics and unsupported special effects remain estimates; this is a client-side advisor, not the server's battle simulator.
