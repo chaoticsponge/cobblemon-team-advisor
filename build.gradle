@@ -10,6 +10,10 @@ base {
     archivesName = 'cobblemon-team-advisor'
 }
 
+tasks.named('jar') {
+    archiveClassifier = providers.gradleProperty('cobblemonVersion').map { "cobblemon-${it}" }.getOrElse('')
+}
+
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(21)
 }

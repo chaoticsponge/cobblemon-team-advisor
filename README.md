@@ -53,6 +53,17 @@ The built mod is at `build/libs/cobblemon-team-advisor-1.16.1.jar`. Copy it into
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
+Every release provides separate downloads labeled `cobblemon-1.7.3` and `cobblemon-1.8.1`. Choose the jar matching your Cobblemon version and install only one advisor jar. Existing releases remain available.
+
+Build each release download against its matching dependency:
+
+```sh
+./gradlew build -PcobblemonVersion=1.7.3 -PcobblemonJar=/path/to/Cobblemon-neoforge-1.7.3+1.21.1.jar
+./gradlew build -PcobblemonVersion=1.8.1 -PcobblemonJar=/path/to/Cobblemon-neoforge-1.8.1+1.21.1.jar
+```
+
+Attach both resulting version-labeled jars to the same mod release. The original unlabeled v1.16.1 download remains available for existing links.
+
 Version 1.16.1 fixes AUTO crashing in wild battles after updating to Cobblemon 1.8.1: that version renamed Pokédex progress `CAUGHT` to `OWNED`. Rare-encounter protection recognizes both names without referencing the removed enum field. Shiny, legendary and uncaught-species protection remains enabled.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
