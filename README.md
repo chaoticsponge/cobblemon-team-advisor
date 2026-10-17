@@ -1,6 +1,6 @@
 # Cobblemon Team Advisor
 
-Client-only NeoForge mod for Minecraft 1.21.1 and Cobblemon 1.7.3.
+Client-only NeoForge mod for Minecraft 1.21.1, checked against Cobblemon 1.7.3 and 1.8.1.
 
 The main export use case is uploading your party and PC data to AI tools such as GPT or Claude for optimal Cobblemon team planning. When a PC screen opens, the mod writes synchronized party and box data to:
 
@@ -49,7 +49,11 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.16.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.16.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+
+The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
+
+Version 1.16.1 fixes AUTO crashing in wild battles after updating to Cobblemon 1.8.1: that version renamed Pokédex progress `CAUGHT` to `OWNED`. Rare-encounter protection recognizes both names without referencing the removed enum field. Shiny, legendary and uncaught-species protection remains enabled.
 
 `build` also checks defensive scoring, survival, move restrictions, trainer-roster loading and contradiction fallback, self-switch prevention and rejection retries, two-turn plans, counter preservation, observation learning, and field effects. Live gameplay must still be checked in Minecraft.
 

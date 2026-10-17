@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'local.cobblemonteamadvisor'
-version = '1.16.0'
+version = '1.16.1'
 
 base {
     archivesName = 'cobblemon-team-advisor'
@@ -19,7 +19,7 @@ neoForge {
 }
 
 dependencies {
-    compileOnly files('../mods/Cobblemon-neoforge-1.7.3+1.21.1.jar')
+    compileOnly files(providers.gradleProperty('cobblemonJar').getOrElse('../mods/Cobblemon-neoforge-1.7.3+1.21.1.jar'))
     compileOnly 'org.jetbrains.kotlin:kotlin-stdlib:2.0.21'
     testImplementation 'com.google.code.gson:gson:2.10.1'
 }

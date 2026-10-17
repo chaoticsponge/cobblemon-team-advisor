@@ -1,7 +1,6 @@
 package local.cobblemonteamadvisor;
 
 import com.cobblemon.mod.common.api.battles.model.actor.ActorType;
-import com.cobblemon.mod.common.api.pokedex.PokedexEntryProgress;
 import com.cobblemon.mod.common.client.CobblemonClient;
 import java.util.HashSet;
 import java.util.Set;
@@ -28,7 +27,8 @@ final class RareEncounterGuard {
                 var pokemon = active.getBattlePokemon();
                 if (approved.contains(pokemon.getUuid())) continue;
                 var dex = CobblemonClient.INSTANCE.getClientPokedexData();
-                boolean caught = dex != null && dex.getHighestKnowledgeForSpecies(pokemon.getSpecies().getResourceIdentifier()) == PokedexEntryProgress.CAUGHT;
+                var progress = dex == null ? null : dex.getHighestKnowledgeForSpecies(pokemon.getSpecies().getResourceIdentifier());
+                boolean caught = RareEncounterPolicy.owned(progress == null ? null : progress.name());
                 Set<String> labels = pokemon.getSpecies().getLabels();
                 String reason = RareEncounterPolicy.reason(Boolean.TRUE.equals(pokemon.getProperties().getShiny()) || pokemon.getState().getCurrentAspects().contains("shiny"),
                         labels.contains("legendary") || labels.contains("mythical") || labels.contains("ultra_beast"), caught, BattleAdvisor.raid(pokemon));

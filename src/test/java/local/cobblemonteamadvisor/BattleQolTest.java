@@ -11,6 +11,10 @@ import java.util.UUID;
 
 final class BattleQolTest {
     static void run() {
+        require(RareEncounterPolicy.owned("CAUGHT"), "Cobblemon 1.7 caught species must be recognized");
+        require(RareEncounterPolicy.owned("OWNED"), "Cobblemon 1.8 owned species must be recognized");
+        for (String progress : new String[]{null, "", "NONE", "UNREGISTERED", "SEEN", "UNKNOWN"})
+            require(!RareEncounterPolicy.owned(progress), "Unowned or unknown dex progress must retain encounter protection");
         require("shiny".equals(RareEncounterPolicy.reason(true, false, true, false)), "Caught shiny wild Pokemon must still pause AUTO");
         require("legendary".equals(RareEncounterPolicy.reason(false, true, true, false)), "Caught legendary wild Pokemon must still be protected");
         require("uncaught".equals(RareEncounterPolicy.reason(false, false, false, false)), "An uncaught species must be protected");
