@@ -21,6 +21,7 @@ import com.cobblemon.mod.common.client.battle.ClientBattlePokemon;
 import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleMoveSelection;
 import com.cobblemon.mod.common.client.gui.battle.subscreen.BattleSwitchPokemonSelection;
 import com.cobblemon.mod.common.pokemon.Pokemon;
+import com.cobblemon.mod.common.pokemon.FormData;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -52,6 +53,8 @@ public final class BattleAdvisor {
     private static final Map<UUID, Set<String>> SEEN_TEAMS = new HashMap<>();
     private static final Map<UUID, String> FAINTED = new HashMap<>();
     private static final Map<UUID, Boolean> RAID_CACHE = new HashMap<>();
+    private static final Map<UUID, String> TERA = new HashMap<>();
+    private static final Map<UUID, Set<String>> STELLAR_USED = new HashMap<>();
     private static final Map<UUID, Float> HEALTH = new HashMap<>();
     private static final Map<UUID, Set<String>> OBSERVED_MOVES = new HashMap<>();
     private static BattleObservations observations = new BattleObservations();
@@ -80,6 +83,7 @@ public final class BattleAdvisor {
         PLAN_CACHE.clear();
         ClientBattle battle = CobblemonClient.INSTANCE.getBattle();
         TrainerBattleTracker.sync(battle);
+        BattleGimmicks.sync(battle == null ? null : battle.getFirstUnansweredRequest());
         UUID id = battle == null ? null : battle.getBattleId();
         if (battle != null && submittedRequest != null && !battle.getPendingActionRequests().contains(submittedRequest)) {
             submittedRequest = null; submittedSwitch = null;
@@ -89,11 +93,13 @@ public final class BattleAdvisor {
                     .flatMap(side -> side.getActors().stream()).map(actor -> Map.of("name", actor.getDisplayName().getString(),
                             "type", actor.getType().name(), "side", actor.getShowdownId())).toList()));
             battleId = id;
+            BattleGimmicks.reset();
             field = new BattleFieldState();
             moveState = new BattleMoveState();
             observations = new BattleObservations();
             guard = new BattleActionGuard();
             switchPolicy = new BattleSwitchPolicy();
+            TERA.clear(); STELLAR_USED.clear();
             SEEN_TEAMS.clear(); FAINTED.clear(); HEALTH.clear(); OBSERVED_MOVES.clear();
             submittedRequest = null; submittedSwitch = null;
             pendingHit = null; firstMove = null; randomOrder = false;
@@ -155,6 +161,7 @@ public final class BattleAdvisor {
     }
 
     public static void observeInvalidChoice() {
+        BattleGimmicks.rejected();
         syncBattle();
         BattleTrace.event("invalid_choice", Map.of());
         switchPolicy.rejected();
@@ -178,6 +185,14 @@ public final class BattleAdvisor {
 
     private static void observeMoveMessage(TranslatableContents translation) {
         Object[] args = translation.getArgs();
+        if (translation.getKey().equals("cobblemon.battle.terastallize") && args.length > 1) {
+            var pokemon = namedPokemon(args[0]);
+            if (pokemon != null && args[1] instanceof Component component) {
+                String name = component.getContents() instanceof TranslatableContents type ? type.getKey() : component.getString();
+                name = id(name.substring(name.lastIndexOf('.') + 1));
+                if (TypeMatchups.TYPES.contains(name) || name.equals("stellar")) TERA.put(pokemon.getUuid(), name);
+            }
+        }
         if (translation.getKey().equals("cobblemon.battle.turn") && args.length > 0) {
             String number = args[0] instanceof Component component ? component.getString() : args[0].toString();
             try {
@@ -198,6 +213,9 @@ public final class BattleAdvisor {
                     String name = translatedMoveId(move);
                     if (name != null) {
                         ClientBattlePokemon user = matches.getFirst();
+                        MoveTemplate usedTemplate = Moves.getByName(name);
+                        if ("stellar".equals(TERA.get(user.getUuid())) && usedTemplate != null)
+                            STELLAR_USED.computeIfAbsent(user.getUuid(), ignored -> new HashSet<>()).add(usedTemplate.getElementalType().showdownId());
                         if (moveState.hasEffect(user.getUuid(), "charging")) moveState.effect(user.getUuid(), "charging", false, null);
                         moveState.used(user.getUuid(), name, choice(fighter(user)));
                         if (OBSERVED_MOVES.computeIfAbsent(user.getUuid(), ignored -> new HashSet<>()).add(name)) {
@@ -398,7 +416,12 @@ public final class BattleAdvisor {
         String koLabel() { return ko ? accuracy >= 1 ? "KO" : "KO*" : ""; }
     }
     private record Fighter(Pokemon own, ClientBattlePokemon live, List<ElementalType> types, String ability,
-                           String item, String status, double hp, double maxHp, boolean allied, boolean entering) {
+                           String item, String status, double hp, double maxHp, boolean allied, boolean entering,
+                           FormData projectedForm, String tera, String gimmick) {
+        Fighter(Pokemon own, ClientBattlePokemon live, List<ElementalType> types, String ability,
+                String item, String status, double hp, double maxHp, boolean allied, boolean entering) {
+            this(own, live, types, ability, item, status, hp, maxHp, allied, entering, null, "", "");
+        }
         int stage(Stats stat) {
             return live == null || entering ? 0 : live.getStatChanges().getOrDefault(stat, 0);
         }
@@ -407,6 +430,11 @@ public final class BattleAdvisor {
             double value;
             if (own != null) {
                 value = own.getStat(stat);
+                if (projectedForm != null && stat != Stats.HP) {
+                    int base = projectedForm.getBaseStats().getOrDefault(stat, 1);
+                    value = Math.floor((2 * base + own.getIvs().getOrDefault(stat) + own.getEvs().getOrDefault(stat) / 4) * own.getLevel() / 100.0) + 5;
+                    value = own.getNature().modifyStat(stat, (int) value);
+                }
             } else {
                 int base = live.getSpecies().getForm(live.getState().getCurrentAspects()).getBaseStats().getOrDefault(stat, 1);
                 TrainerRoster.Member member = trainerMember(live);
@@ -448,6 +476,57 @@ public final class BattleAdvisor {
         UUID uuid() { return own != null ? own.getUuid() : live.getUuid(); }
     }
 
+    private static Fighter transformed(Fighter own, BattleMoveSelection.MoveTile tile) {
+        String gimmick = BattleGimmicks.id(tile);
+        if (gimmick.isEmpty()) return own;
+        List<ElementalType> types = own.types;
+        FormData form = null;
+        String ability = own.ability, item = own.item, tera = "";
+        double hp = own.hp, max = own.maxHp;
+        if (gimmick.equals("mega") || gimmick.equals("ultra")) {
+            var forms = own.own.getSpecies().getForms().stream().filter(f ->
+                    id(f.getName()).startsWith(gimmick.equals("mega") ? "mega" : "ultra")).toList();
+            if (forms.size() == 1) form = forms.getFirst();
+            else for (var candidate : forms) {
+                String name = id(candidate.getName());
+                if (name.endsWith("x") && item.endsWith("x") || name.endsWith("y") && item.endsWith("y")) form = candidate;
+            }
+            if (form != null) {
+                types = new ArrayList<>();
+                for (var type : form.getTypes()) types.add(type);
+                var abilities = form.getAbilities().iterator();
+                if (abilities.hasNext()) ability = id(abilities.next().getTemplate().getName());
+            }
+        } else if (gimmick.equals("terastal")) {
+            tera = id(tile.getMoveSelection().getMoveSet().getCanTerastallize());
+            var type = ElementalTypes.get(tera);
+            if (type != null) types = List.of(type); // Stellar retains the original defensive typing.
+        } else if (gimmick.equals("max")) {
+            if (!tile.getMoveSelection().getMoveSet().hasActiveGimmick()) {
+                hp *= 1.5; max *= 1.5; // Conservative level-zero HP boost, applied only on activation.
+            }
+            if (choice(own)) item = "";
+        }
+        return new Fighter(own.own, own.live, types, ability, item, own.status, hp, max, own.allied, own.entering, form, tera, gimmick);
+    }
+
+    private static ElementalType tileType(BattleMoveSelection.MoveTile tile, MoveTemplate move, Fighter own) {
+        if (BattleGimmicks.powered(move)) return move.getElementalType();
+        if (id(move.getName()).equals("terablast") && !own.tera.isEmpty() && !own.tera.equals("stellar")) {
+            var type = ElementalTypes.get(own.tera);
+            if (type != null) return type;
+        }
+        return move.getEffectiveElementalType(own.own);
+    }
+
+    private static Fighter terastallized(Fighter own) {
+        String tera = TERA.get(own.uuid());
+        if (tera == null) return own;
+        var type = ElementalTypes.get(tera);
+        return new Fighter(own.own, own.live, type == null ? own.types : List.of(type), own.ability, own.item,
+                own.status, own.hp, own.maxHp, own.allied, own.entering, own.projectedForm, tera, own.gimmick);
+    }
+
     private static Fighter mine(Pokemon pokemon, ShowdownPokemon showdown, boolean active) {
         ClientBattlePokemon live = active ? livePokemon(pokemon.getUuid()) : null;
         double max = Math.max(1, pokemon.getMaxHealth());
@@ -471,9 +550,9 @@ public final class BattleAdvisor {
         if (showdown != null && showdown.getAbility() != null) ability = id(showdown.getAbility());
         List<ElementalType> types = new ArrayList<>();
         for (ElementalType type : pokemon.getTypes()) types.add(type);
-        return new Fighter(pokemon, live, types, ability,
+        return terastallized(new Fighter(pokemon, live, types, ability,
                 id(BuiltInRegistries.ITEM.getKey(pokemon.getHeldItem$common().getItem()).getPath()), status,
-                Math.max(0, Math.min(max, hp)), max, true, !active);
+                Math.max(0, Math.min(max, hp)), max, true, !active));
     }
 
     static TrainerWinEstimator.Model previewModel(List<Pokemon> own, List<Pokemon> foes, int lead) {
@@ -675,10 +754,10 @@ public final class BattleAdvisor {
                 * pokemon.getLevel() / 100.0D) + pokemon.getLevel() + 10;
         if (pokemon.getSpecies().getName().equalsIgnoreCase("shedinja")) max = 1;
         if (pokemon.getMaxHp() > 1 || pokemon.isHpFlat() && pokemon.getMaxHp() > 0) max = pokemon.getMaxHp();
-        return new Fighter(null, pokemon, types, id(pokemon.getProperties().getAbility() != null ? pokemon.getProperties().getAbility()
+        return terastallized(new Fighter(null, pokemon, types, id(pokemon.getProperties().getAbility() != null ? pokemon.getProperties().getAbility()
                 : member == null ? null : member.ability()), id(pokemon.getProperties().getHeldItem() != null ? pokemon.getProperties().getHeldItem()
                 : member == null ? null : member.heldItem()), pokemon.getStatus() == null ? "" : pokemon.getStatus().getShowdownName(),
-                hpFraction(pokemon) * max, max, false, false);
+                hpFraction(pokemon) * max, max, false, false));
     }
 
     private static double hpFraction(ClientBattlePokemon pokemon) {
@@ -825,8 +904,12 @@ public final class BattleAdvisor {
     private static List<BattlePlanner.Action> actions(Fighter user, Fighter target, BattleMoveSelection selection) {
         List<BattlePlanner.Action> actions = new ArrayList<>();
         if (selection != null) {
-            for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && available(user, tile.getMoveTemplate())) {
-                actions.add(action(user, target, tile.getMoveTemplate(), tile.getElementalType(), tile.getMove().getPp()));
+            var tiles = user.gimmick.equals("max") ? BattleGimmicks.tiles(selection).stream()
+                    .filter(t -> BattleGimmicks.id(t).equals("max")).toList() : selection.getBaseTiles();
+            for (var tile : tiles) {
+                MoveTemplate move = BattleGimmicks.move(tile);
+                if ((user.gimmick.equals("max") || tile.getSelectable()) && (user.gimmick.equals("max") || available(user, move)))
+                    actions.add(action(user, target, move, tileType(tile, move, user), tile.getMove().getPp()));
             }
         } else if (user.own != null) {
             for (Move move : user.own.getMoveSet()) if (move != null && move.getCurrentPp() > 0 && available(user, move.getTemplate())) {
@@ -872,10 +955,18 @@ public final class BattleAdvisor {
     }
 
     private static BattlePlanner.Plan movePlan(BattleMoveSelection.MoveTile tile, Fighter own, Fighter foe) {
-        String key = "move:" + own.uuid() + ":" + foe.uuid() + ":" + id(tile.getMoveTemplate().getName());
+        own = transformed(own, tile);
+        MoveTemplate move = BattleGimmicks.move(tile);
+        return movePlan(tile, own, foe, move, tileType(tile, move, own));
+    }
+
+    private static BattlePlanner.Plan movePlan(BattleMoveSelection.MoveTile tile, Fighter own, Fighter foe, MoveTemplate move, ElementalType type) {
+        String key = "move:" + own.uuid() + ":" + foe.uuid() + ":" + own.gimmick + ":" + tile.getMove().getId() + ":" + id(move.getName());
         return PLAN_CACHE.computeIfAbsent(key, ignored -> {
             List<BattlePlanner.Action> actions = actions(own, foe, tile.getMoveSelection());
-            BattlePlanner.Action selected = action(own, foe, tile.getMoveTemplate(), tile.getElementalType(), tile.getMove().getPp());
+            if (own.gimmick.equals("zmove") && tile.getMove().getPp() == 1)
+                actions = actions.stream().filter(a -> !a.id().equals(id(tile.getMove().getId()))).toList();
+            BattlePlanner.Action selected = action(own, foe, move, type, tile.getMove().getPp());
             return plan(own, foe, actions, selected, false);
         });
     }
@@ -924,8 +1015,8 @@ public final class BattleAdvisor {
         Pokemon active = CobblemonTeamAdvisor.activePokemon(selection);
         if (active == null || opponent == null || candidate == null || selection.getMoveSet().getTrapped()
                 || !canSwitch(selection.getRequest(), candidate, showdown)) return false;
-        for (var tile : selection.getMoveTiles()) {
-            if (tile.getSelectable() && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo()))
+        for (var tile : BattleGimmicks.tiles(selection)) {
+            if (BattleGimmicks.selectable(tile) && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo()))
                 return switchDecision(active, candidate, opponent, false, "stay for a reliable KO", Map.of());
         }
         if (!viableSwitch(candidate, showdown, opponent))
@@ -934,9 +1025,12 @@ public final class BattleAdvisor {
         Matchup next = matchup(candidate, showdown, opponent, false);
         Fighter own = mine(active, null, true), foe = enemy(opponent), replacement = mine(candidate, showdown, false);
         boolean canDamage = false;
-        for (var tile : selection.getMoveTiles()) {
-            if (tile.getSelectable() && available(own, tile.getMoveTemplate()) && damaging(tile.getMoveTemplate())
-                    && damage(own, foe, tile.getMoveTemplate(), tile.getElementalType(), 0.85) > 0) canDamage = true;
+        for (var tile : BattleGimmicks.tiles(selection)) {
+            if (BattleGimmicks.selectable(tile)) {
+                Fighter user = transformed(own, tile);
+                MoveTemplate move = BattleGimmicks.move(tile);
+                if (Double.isFinite(moveAdvice(tile).score()) && damaging(move) && damage(user, foe, move, tileType(tile, move, user), 0.85) > 0) canDamage = true;
+            }
         }
         BattlePlanner.Plan forecast = switchPlan(candidate, showdown, opponent);
         double currentRisk = current.incoming() / Math.max(1, own.hp);
@@ -949,7 +1043,7 @@ public final class BattleAdvisor {
         for (Stats stat : List.of(Stats.ATTACK, Stats.SPECIAL_ATTACK, Stats.DEFENCE, Stats.SPECIAL_DEFENCE, Stats.SPEED))
             lostBoosts += Math.max(0, own.stage(stat));
         double stayValue = -Double.MAX_VALUE;
-        for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && Double.isFinite(moveAdvice(tile).score()))
+        for (var tile : BattleGimmicks.tiles(selection)) if (BattleGimmicks.selectable(tile) && Double.isFinite(moveAdvice(tile).score()))
             stayValue = Math.max(stayValue, movePlan(tile, own, foe).value());
         int cost = 4 + Math.min(8, lostBoosts * 2);
         double healthAdjustment = BattleSwitchPolicy.healthAdjustment(own.hp / own.maxHp, replacement.hp / replacement.maxHp);
@@ -972,7 +1066,7 @@ public final class BattleAdvisor {
         Pokemon active = tile.getPokemon();
         ClientBattlePokemon opponent = CobblemonTeamAdvisor.currentOpponent(tile.getMoveSelection());
         BattleTrace.event("auto_move_submitted", Map.of("pokemon", active == null ? "unknown" : active.getUuid().toString(),
-                "opponent", opponent == null ? "unknown" : opponent.getUuid().toString(), "move", tile.getMoveTemplate().getName(),
+                "opponent", opponent == null ? "unknown" : opponent.getUuid().toString(), "move", BattleGimmicks.move(tile).getName(),
                 "advice", moveAdvice(tile), "options", tile.getMoveSelection().getMoveTiles().stream().filter(option -> option.getSelectable())
                         .map(option -> Map.of("move", option.getMoveTemplate().getName(), "pp", option.getMove().getPp(), "advice", moveAdvice(option))).toList()));
     }
@@ -993,7 +1087,7 @@ public final class BattleAdvisor {
         Fighter own = mine(pokemon, null, true), foe = enemy(opponent);
         if (own.hp <= 0 || heal <= 0 && (!cures || own.status.isEmpty())) return Double.NEGATIVE_INFINITY;
         double baseline = -Double.MAX_VALUE;
-        for (var tile : selection.getMoveTiles()) if (tile.getSelectable() && available(own, tile.getMoveTemplate())) {
+        for (var tile : BattleGimmicks.tiles(selection)) if (BattleGimmicks.selectable(tile) && available(own, tile.getMoveTemplate())) {
             MoveAdvice advice = moveAdvice(tile);
             if (advice.firstKo() || advice.safeKo()) return Double.NEGATIVE_INFINITY;
             baseline = Math.max(baseline, movePlan(tile, own, foe).value());
@@ -1006,7 +1100,7 @@ public final class BattleAdvisor {
             baseline = Math.max(baseline, switchPlan(candidate, snapshot, opponent).value()
                     + BattleSwitchPolicy.healthAdjustment(own.hp / own.maxHp, replacement.hp / replacement.maxHp) - 10);
         }
-        Fighter treated = cures ? new Fighter(own.own, own.live, own.types, own.ability, own.item, "", own.hp, own.maxHp, true, false) : own;
+        Fighter treated = cures ? new Fighter(own.own, own.live, own.types, own.ability, own.item, "", own.hp, own.maxHp, true, false, own.projectedForm, own.tera, own.gimmick) : own;
         var effect = new BattlePlanner.Effect(Math.min(heal, own.maxHp - own.hp), 0, 0, 1, 1, 1, 0, "", false, false);
         var item = new BattlePlanner.Action("item:medicine", 0, 1, 10, 1, effect, false, false, false);
         var forecast = plan(treated, foe, actions(treated, foe, selection), item, false);
@@ -1025,15 +1119,17 @@ public final class BattleAdvisor {
 
     private static MoveAdvice calculateMoveAdvice(BattleMoveSelection.MoveTile tile) {
         Pokemon pokemon = tile.getPokemon();
-        MoveTemplate move = tile.getMoveTemplate();
+        MoveTemplate move = BattleGimmicks.move(tile);
         if (pokemon == null || move == null) return new MoveAdvice(0, false, false, "legal fallback");
         String restriction = moveState.unavailable(pokemon.getUuid(), id(move.getName()), ownMoveNames(pokemon), true);
         if (restriction == null) restriction = moveState.restricted(pokemon.getUuid(), id(move.getName()), !damaging(move),
                 choice(mine(pokemon, null, true)));
+        if (BattleGimmickPolicy.powered(BattleGimmicks.id(tile))) restriction = null;
         if (restriction != null) return new MoveAdvice(Double.NEGATIVE_INFINITY, false, false, restriction);
         var target = CobblemonTeamAdvisor.target(tile);
         if (target == null || !target.hasPokemon()) return new MoveAdvice(0, false, false, "legal fallback");
-        Fighter own = mine(pokemon, null, true);
+        Fighter own = transformed(mine(pokemon, null, true), tile);
+        ElementalType type = tileType(tile, move, own);
         Fighter foe = enemy(target.getBattlePokemon());
         double accuracy = moveAccuracy(own, foe, move);
         List<MoveTemplate> replies = enemyMoves(foe.live);
@@ -1048,14 +1144,14 @@ public final class BattleAdvisor {
             if (!precedes) before = Math.max(before, hit);
         }
         if (replies.isEmpty()) { incoming = own.maxHp * 0.25D; before = incoming; first = false; }
-        BattlePlanner.Plan forecast = movePlan(tile, own, foe);
+        BattlePlanner.Plan forecast = movePlan(tile, own, foe, move, type);
         if (!damaging(move)) {
             MoveAdvice utility = utility(own, foe, move, accuracy, incoming, before);
             return new MoveAdvice(forecast.value() / 20 + utility.score() * 0.15, false, false,
                     utility.reason() + (forecast.next().isEmpty() ? "" : "; then " + forecast.next()));
         }
-        double damage = damage(own, foe, move, tile.getElementalType(), 0.925D);
-        double minimum = damage(own, foe, move, tile.getElementalType(), 0.85D);
+        double damage = damage(own, foe, move, type, 0.925D);
+        double minimum = damage(own, foe, move, type, 0.85D);
         boolean unknownHp = unknownRaidHp(foe);
         boolean canHitNow = (!moveState.protectedNow(foe.uuid()) || effects(move).has("breaksProtect"))
                 && (!charging(own, move) || moveState.hasEffect(own.uuid(), "charging"))
@@ -1077,7 +1173,7 @@ public final class BattleAdvisor {
                 && damage > 0 && hasHazards()) score += 0.8D;
         String reason = ko ? "minimum normal hit KOs; " + Math.round(accuracy * 100) + "% accuracy"
                 : unknownHp ? "raid HP unknown; ranked by expected damage"
-                : canHitNow && damage(own, foe, move, tile.getElementalType(), 1) >= foe.hp
+                : canHitNow && damage(own, foe, move, type, 1) >= foe.hp
                     ? "KO needs a high damage roll; " + Math.round(accuracy * 100) + "% accuracy"
                     : "expected damage " + Math.round(100 * damage / foe.maxHp * accuracy) + "%";
         if (firstKo) reason += "; before enemy moves";
@@ -1088,7 +1184,7 @@ public final class BattleAdvisor {
         boolean canFinish = BattleMatchupPolicy.survivesAction(own.hp, own.maxHp, before, drain, recoil)
                 && !own.status.equals("slp") && !own.status.equals("frz")
                 && (!needsCharge || own.hp > incoming + before + Math.max(0, residual(own)));
-        double chance = canHitNow && !unknownHp ? koChance(own, foe, move, tile.getElementalType(), accuracy) : 0;
+        double chance = canHitNow && !unknownHp ? koChance(own, foe, move, type, accuracy) : 0;
         double actionChance = own.status.equals("par") ? 0.75 : 1;
         if (chance > 0 && !ko) reason = "normal-hit KO chance " + Math.round(100 * chance) + "%; " + reason;
         double damagePerTurn = damage;
@@ -1222,6 +1318,10 @@ public final class BattleAdvisor {
         JsonObject effect = effects(move);
         String moveId = id(move.getName());
         type = moveType(attacker, move, type);
+        if (id(move.getName()).equals("terablast") && !attacker.tera.isEmpty()) {
+            var teraType = ElementalTypes.get(attacker.tera);
+            if (teraType != null) type = teraType;
+        }
         double typeEffectiveness = typeEffectiveness(defender, type, moveId);
         double effectiveness = BattleMatchupPolicy.effectiveMultiplier(typeEffectiveness, type.showdownId(),
                 field.gravity && defender.ability.equals("levitate") ? "" : defender.ability, attacker.ability);
@@ -1269,6 +1369,7 @@ public final class BattleAdvisor {
         var moveInfo = damageMove(move, type, power);
         power *= BattleDamageModifiers.powerFactor(user, moveInfo);
         boolean special = move.getDamageCategory() == DamageCategories.INSTANCE.getSPECIAL();
+        if (name.equals("terablast") && !attacker.tera.isEmpty()) special = attacker.stat(Stats.SPECIAL_ATTACK) >= attacker.stat(Stats.ATTACK);
         double attack = attacker.stat(special ? Stats.SPECIAL_ATTACK : Stats.ATTACK);
         if (name.equals("facade") && attacker.status.equals("brn") && !attacker.ability.equals("guts")) attack *= 2;
         if (name.equals("bodypress")) attack = attacker.stat(Stats.DEFENCE);
@@ -1283,6 +1384,12 @@ public final class BattleAdvisor {
         if (critical && attacker.stage(attackStat) < 0) attack /= BattleMatchupPolicy.stageMultiplier(attacker.stage(attackStat));
         attack *= BattleDamageModifiers.attackFactor(user, moveInfo);
         double stab = hasType(attacker, type.showdownId()) ? attacker.ability.equals("adaptability") ? 2 : 1.5D : 1;
+        if (!attacker.tera.isEmpty()) {
+            boolean original = false;
+            var originals = attacker.own != null ? attacker.own.getTypes() : attacker.live.getSpecies().getForm(attacker.live.getState().getCurrentAspects()).getTypes();
+            for (var originalType : originals) if (originalType.showdownId().equals(type.showdownId())) original = true;
+            stab = BattleGimmickPolicy.stab(original, attacker.tera.equals(type.showdownId()), attacker.tera.equals("stellar") && !STELLAR_USED.getOrDefault(attacker.uuid(), Set.of()).contains(type.showdownId()), attacker.ability.equals("adaptability"));
+        }
         double hits = forcedHits > 0 ? forcedHits : 1;
         if (forcedHits <= 0 && effect.has("multihit")) {
             JsonElement multi = effect.get("multihit");
@@ -1336,7 +1443,7 @@ public final class BattleAdvisor {
         String moveId = id(move.getName());
         JsonObject effect = effects(move);
         boolean changesType = BattleDamageModifiers.changesType(moveId);
-        if (changesType) type = ElementalTypes.getOrException(BattleDamageModifiers.type(type.showdownId(), attacker.ability));
+        if (changesType) type = ElementalTypes.getOrException(BattleGimmickPolicy.type(BattleGimmicks.powered(move), type.showdownId(), attacker.ability));
         if (attacker.ability.equals("liquidvoice") && effect.has("sound")) type = ElementalTypes.WATER;
         if (moveId.equals("weatherball")) type = switch (field.weather) {
             case "sunnyday" -> ElementalTypes.FIRE;
@@ -1350,6 +1457,10 @@ public final class BattleAdvisor {
 
     private static double multiplier(Fighter attacker, Fighter defender, MoveTemplate move, ElementalType type) {
         type = moveType(attacker, move, type);
+        if (id(move.getName()).equals("terablast") && !attacker.tera.isEmpty()) {
+            var teraType = ElementalTypes.get(attacker.tera);
+            if (teraType != null) type = teraType;
+        }
         double base = typeEffectiveness(defender, type, id(move.getName()));
         if (BattleDamageModifiers.immune(defender.ability, damageMove(move, type, move.getPower()), bypassesAbility(attacker))) return 0;
         if (defender.ability.equals("wonderguard") && base <= 1 && !bypassesAbility(attacker)) return 0;

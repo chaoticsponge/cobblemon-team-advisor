@@ -4,3 +4,5 @@
 - Build and run checks separately against each target's Cobblemon jar. Use `-PcobblemonVersion=<version> -PcobblemonJar=<matching jar path>` to label each artifact.
 - Publish both `cobblemon-team-advisor-<mod version>-cobblemon-1.7.3.jar` and `cobblemon-team-advisor-<mod version>-cobblemon-1.8.1.jar` on the same GitHub release. Clearly identify which download matches each Cobblemon version; players install only one.
 - Do not silently drop either target or publish a failing build. Report any compatibility blocker and preserve the last working download.
+
+- Cobblemon 1.8.2 is also supported from v1.17.0 onward. Build/check it separately and retain its version-labeled download alongside the 1.7.3 and 1.8.1 assets.

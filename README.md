@@ -1,6 +1,6 @@
 # Cobblemon Team Advisor
 
-Client-only NeoForge mod for Minecraft 1.21.1, checked against Cobblemon 1.7.3 and 1.8.1.
+Client-only NeoForge mod for Minecraft 1.21.1, checked against Cobblemon 1.7.3, 1.8.1 and 1.8.2.
 
 The main export use case is uploading your party and PC data to AI tools such as GPT or Claude for optimal Cobblemon team planning. When a PC screen opens, the mod writes synchronized party and box data to:
 
@@ -49,20 +49,21 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.16.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.17.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
-Every release provides separate downloads labeled `cobblemon-1.7.3` and `cobblemon-1.8.1`. Choose the jar matching your Cobblemon version and install only one advisor jar. Existing releases remain available.
+Every release provides separate downloads labeled `cobblemon-1.7.3`, `cobblemon-1.8.1` and `cobblemon-1.8.2`. Choose the jar matching your Cobblemon version and install only one advisor jar. Existing releases remain available.
 
 Build each release download against its matching dependency:
 
 ```sh
 ./gradlew build -PcobblemonVersion=1.7.3 -PcobblemonJar=/path/to/Cobblemon-neoforge-1.7.3+1.21.1.jar
 ./gradlew build -PcobblemonVersion=1.8.1 -PcobblemonJar=/path/to/Cobblemon-neoforge-1.8.1+1.21.1.jar
+./gradlew build -PcobblemonVersion=1.8.2 -PcobblemonJar=/path/to/Cobblemon-neoforge-1.8.2+1.21.1.jar
 ```
 
-Attach both resulting version-labeled jars to the same mod release. The original unlabeled v1.16.1 download remains available for existing links.
+Attach all resulting version-labeled jars to the same mod release. The original unlabeled v1.16.1 download remains available for existing links.
 
 Version 1.16.1 fixes AUTO crashing in wild battles after updating to Cobblemon 1.8.1: that version renamed Pokédex progress `CAUGHT` to `OWNED`. Rare-encounter protection recognizes both names without referencing the removed enum field. Shiny, legendary and uncaught-species protection remains enabled.
 
@@ -151,3 +152,13 @@ Item use goes through ordinary held-item interaction and the server's own enable
 ### Unfocused AUTO battles
 
 When Dynamic FPS is installed, the advisor temporarily raises its frame target to at least 30 FPS while AUTO is enabled in a battle. The installed Dynamic FPS version uses that target to skip low-rate rendering; restoring normal battle rendering also keeps GUI/decision processing responsive while unfocused. No Dynamic FPS settings file is changed. Its usual throttling resumes when AUTO stops or the battle ends. OS suspension, network/server lag and other throttling mods are outside this compatibility fix. Build/regression checks pass; the new screen, native medicine interaction, PC application and background behavior still require live gameplay validation after restarting.
+
+### Automatic battle mechanics (v1.17.0)
+
+AUTO compares ordinary moves with Mega Evolution, Ultra Burst, Z-Moves, Dynamax/Gigantamax and Terastallization offered by the current server request and battle UI. Required equipment, held items, once-per-battle limits and server restrictions still apply. It submits one native move response containing the selected base move, target and mechanic; it does not transform Pokémon locally or send commands.
+
+The scorer uses converted Z/Max power (including per-move overrides and fixed-power signature moves), move category, accuracy and type effectiveness. Mega/Ultra candidates use known form stats, typing and ability. Tera candidates use their new defensive type while retaining original-type STAB; confirmed Tera messages update subsequent turns for both sides. Confirmed Stellar uses are tracked per move type; the two-turn forecast does not consume those boosts internally. Dynamax survival estimates use the conservative level-zero HP boost only on activation. Follow-up plans do not reuse Z-Moves. Switch and medicine decisions also consider offered battle mechanics.
+
+Rejected transformations are suppressed for the rest of that battle, leaving ordinary moves and other mechanics available. During an already active Dynamax, only the rejected base move is suppressed so other Max Moves remain usable. The battle trace records mechanic submissions. No extra chat messages or settings are added.
+
+These remain bounded estimates: unusual form-changing items, entry ability effects, Z-status bonuses, Max weather/terrain/stat effects, custom server moves and the exact remaining Dynamax duration are not fully simulated. Live in-game validation is still required; build checks do not prove server acceptance. The bundled powered-move table is exported from the installed Showdown data with `scripts/export-gimmick-moves.cjs`.

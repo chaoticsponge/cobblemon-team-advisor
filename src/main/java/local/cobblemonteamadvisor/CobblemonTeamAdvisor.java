@@ -238,7 +238,7 @@ public final class CobblemonTeamAdvisor {
             if (tile != null) {
                 TrainerBattleTracker.automatedAction();
                 BattleAdvisor.traceMove(tile);
-                tile.onClick();
+                BattleGimmicks.submit(tile);
                 lastAutoActionAt = now;
             }
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
@@ -504,20 +504,7 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static BattleMoveSelection.MoveTile bestMoveTile(BattleMoveSelection selection) {
-        BattleMoveSelection.MoveTile bestTile = null;
-        double bestScore = Double.NEGATIVE_INFINITY;
-        for (BattleMoveSelection.MoveTile tile : selection.getMoveTiles()) {
-            if (!tile.getSelectable()) {
-                continue;
-            }
-
-            double score = moveScore(tile);
-            if (score > bestScore) {
-                bestScore = score;
-                bestTile = tile;
-            }
-        }
-        return bestTile;
+        return BattleGimmicks.best(selection);
     }
 
     private static double moveScore(BattleMoveSelection.MoveTile tile) {
