@@ -24,7 +24,7 @@ final class BattleTraceTest {
             BattleTrace.event("auto_move_submitted", Map.of("advice", new Advice(Double.NEGATIVE_INFINITY), "raw", Float.NaN));
             Path folder = directory.resolve("battle-logs");
             Path file;
-            try (var files = Files.list(folder)) { file = files.findFirst().orElseThrow(); }
+            try (var files = Files.list(folder)) { file = files.filter(p -> p.toString().endsWith(".jsonl")).findFirst().orElseThrow(); }
             var during = Files.readAllLines(file);
             require(during.size() == 4, "Trace must flush mid-battle and deduplicate render-time evaluations");
             var row = JsonParser.parseString(during.get(1)).getAsJsonObject();
@@ -38,7 +38,7 @@ final class BattleTraceTest {
             require(Files.readAllLines(file).size() == 6, "A new turn permits a fresh evaluation and battle exit closes the trace");
             BattleTrace.sync(UUID.randomUUID(), Map.of());
             BattleTrace.sync(null, Map.of());
-            try (var files = Files.list(folder)) { require(files.count() == 2, "Separate battle sessions must not overwrite prior traces"); }
+            try (var files = Files.list(folder)) { require(files.filter(p -> p.toString().endsWith(".jsonl")).count() == 2, "Separate battle sessions must not overwrite prior traces"); }
             System.out.println("Local battle trace version, turn, flush, deduplication and JSON safety checks passed.");
         } catch (java.io.IOException error) {
             throw new AssertionError(error);

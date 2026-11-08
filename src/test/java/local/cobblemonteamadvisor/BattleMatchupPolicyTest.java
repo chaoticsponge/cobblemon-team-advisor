@@ -174,6 +174,7 @@ public final class BattleMatchupPolicyTest {
         TrainerBattleStatsTest.run();
         TrainerWinEstimatorTest.run();
         BattleTraceTest.run();
+        BattleReportTest.run();
         BattleQolTest.run();
         BattleGimmickTest.run();
         System.out.println("Battle policy and conditional-move regression checks passed.");

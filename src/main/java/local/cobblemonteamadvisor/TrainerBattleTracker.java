@@ -14,8 +14,10 @@ import net.minecraft.network.chat.Component;
 import net.neoforged.fml.ModList;
 
 final class TrainerBattleTracker {
-    private static TrainerBattleStats stats;
+    private static TrainerBattleStats stats, allStats;
     private static String version;
+    private static final java.util.Map<String, String> environment = new java.util.LinkedHashMap<>();
+    static java.util.Map<String, String> environment() { return java.util.Map.copyOf(environment); }
     private static ClientBattle trackedBattle;
 
     private TrainerBattleTracker() { }
@@ -23,22 +25,24 @@ final class TrainerBattleTracker {
     static void initialize() {
         version = ModList.get().getModContainerById(CobblemonTeamAdvisor.MOD_ID).orElseThrow()
                 .getModInfo().getVersion().toString();
+        for (String id : List.of("cobblemon", "rctmod", "mega_showdown", CobblemonTeamAdvisor.MOD_ID))
+            ModList.get().getModContainerById(id).ifPresent(mod -> environment.put(id, mod.getModInfo().getVersion().toString()));
         BattleTrace.initialize(Minecraft.getInstance().gameDirectory.toPath(), version);
-        try {
-            stats = new TrainerBattleStats(Minecraft.getInstance().gameDirectory.toPath());
-        } catch (IOException error) {
-            LogUtils.getLogger().error("Could not initialize local trainer battle statistics", error);
-        }
+        var profile = Minecraft.getInstance().gameDirectory.toPath();
+        try { stats = new TrainerBattleStats(profile); }
+        catch (IOException error) { LogUtils.getLogger().error("Could not initialize AUTO trainer statistics", error); }
+        try { allStats = new TrainerBattleStats(profile, "trainer-all-battle-stats", false); }
+        catch (IOException error) { LogUtils.getLogger().error("Could not initialize all-trainer statistics", error); }
     }
 
     static void sync(ClientBattle battle) {
-        if (stats == null || battle != null && battle == trackedBattle) return;
+        if (stats == null && allStats == null || battle != null && battle == trackedBattle) return;
         Minecraft client = Minecraft.getInstance();
         ClientBattleActor player = battle == null || client.player == null || battle.getSpectating()
                 ? null : battle.getParticipatingActor(client.player.getUUID());
         if (player == null) {
             trackedBattle = null;
-            stats.start(null, version, null, null, null);
+            for (var table : Arrays.asList(stats, allStats)) if (table != null) table.start(null, version, null, null, null);
             return;
         }
         List<ClientBattleActor> allies = player.getSide().getActors();
@@ -47,7 +51,8 @@ final class TrainerBattleTracker {
         if (enemies.isEmpty()) return;
         trackedBattle = battle;
         boolean trainers = enemies.stream().allMatch(actor -> actor.getType() == ActorType.NPC);
-        stats.start(battle.getBattleId(), version, trainers ? names(enemies) : null, names(allies), names(enemies));
+        for (var table : Arrays.asList(stats, allStats)) if (table != null)
+            table.start(battle.getBattleId(), version, trainers ? names(enemies) : null, names(allies), names(enemies));
     }
 
     private static String names(List<ClientBattleActor> actors) {
@@ -56,16 +61,13 @@ final class TrainerBattleTracker {
 
     static void automatedAction() {
         sync(CobblemonClient.INSTANCE.getBattle());
-        if (stats != null) stats.automatedAction();
+        for (var table : Arrays.asList(stats, allStats)) if (table != null) table.automatedAction();
     }
 
     static void message(String key, Object[] arguments) {
-        if (stats == null || arguments.length != 1) return;
+        if (arguments.length != 1) return;
         String names = arguments[0] instanceof Component component ? component.getString() : String.valueOf(arguments[0]);
-        try {
-            stats.message(key, names);
-        } catch (IOException error) {
-            LogUtils.getLogger().error("Could not save local trainer battle statistics", error);
-        }
+        for (var table : Arrays.asList(stats, allStats)) if (table != null) try { table.message(key, names); }
+        catch (IOException error) { LogUtils.getLogger().error("Could not save local trainer battle statistics", error); }
     }
 }

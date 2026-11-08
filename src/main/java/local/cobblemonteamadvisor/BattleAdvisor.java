@@ -68,6 +68,7 @@ public final class BattleAdvisor {
     private static SeenMove firstMove;
     private static boolean randomOrder;
     private static UUID battleId;
+    private static long lastTraceSnapshot;
     private static BattleFieldState field = new BattleFieldState();
     private static BattleMoveState moveState = new BattleMoveState();
 
@@ -89,9 +90,7 @@ public final class BattleAdvisor {
             submittedRequest = null; submittedSwitch = null;
         }
         if (!java.util.Objects.equals(id, battleId)) {
-            BattleTrace.sync(id, battle == null ? Map.of() : Map.of("party", traceParty(), "actors", java.util.Arrays.stream(battle.getSides())
-                    .flatMap(side -> side.getActors().stream()).map(actor -> Map.of("name", actor.getDisplayName().getString(),
-                            "type", actor.getType().name(), "side", actor.getShowdownId())).toList()));
+            BattleTrace.sync(id, battle == null ? Map.of() : traceContext(battle));
             battleId = id;
             BattleGimmicks.reset();
             field = new BattleFieldState();
@@ -102,8 +101,10 @@ public final class BattleAdvisor {
             TERA.clear(); STELLAR_USED.clear();
             SEEN_TEAMS.clear(); FAINTED.clear(); HEALTH.clear(); OBSERVED_MOVES.clear();
             submittedRequest = null; submittedSwitch = null;
-            pendingHit = null; firstMove = null; randomOrder = false;
+            pendingHit = null; firstMove = null; randomOrder = false; lastTraceSnapshot = 0;
         }
+        long now = System.nanoTime();
+        if (battle != null && now - lastTraceSnapshot > 500_000_000L) { lastTraceSnapshot = now; traceSnapshot(); }
     }
 
     public static void observeMessages(List<Component> messages) {
@@ -207,6 +208,16 @@ public final class BattleAdvisor {
         if ((used || prevented) && args.length > 0 && args[0] instanceof Component source) {
             List<ClientBattlePokemon> matches = activePokemon().stream()
                     .filter(pokemon -> pokemon.getDisplayName().getString().equals(source.getString())).toList();
+            if (used && args.length > 1 && args[1] instanceof Component move) {
+                String name = translatedMoveId(move);
+                if (name != null) {
+                    var user = matches.size() == 1 ? matches.getFirst() : null;
+                    BattleTrace.event("move_used", Map.of("pokemon", user == null ? "" : user.getUuid().toString(), "move", name,
+                            "actor", user == null ? "" : user.getActor().getUuid().toString(), "side", user == null ? "unknown" : traceSide(user),
+                            "source", "battle_message", "source_text", source.getString(),
+                            "candidate_pokemon", matches.stream().map(p -> p.getUuid().toString()).toList()));
+                }
+            }
             if (matches.size() == 1) {
                 if (prevented) moveState.attempted(matches.getFirst().getUuid());
                 if (used && args.length > 1 && args[1] instanceof Component move) {
@@ -392,11 +403,26 @@ public final class BattleAdvisor {
 
     private static void observe(Component message) {
         if (message.getContents() instanceof TranslatableContents translation) {
+            if (translation.getKey().startsWith("cobblemon.battle.")) traceSnapshot();
             observeMoveMessage(translation);
             if (translation.getKey().startsWith("cobblemon.battle.")) {
-                BattleTrace.event("message", Map.of("key", translation.getKey(), "text", message.getString(),
-                        "args", java.util.Arrays.stream(translation.getArgs()).map(argument -> argument instanceof Component component
-                                ? component.getString() : String.valueOf(argument)).toList()));
+                Map<String, String> refs = new java.util.LinkedHashMap<>();
+                for (int i = 0; i < translation.getArgs().length; i++) {
+                    var pokemon = namedPokemon(translation.getArgs()[i]);
+                    if (pokemon != null) refs.put(Integer.toString(i), pokemon.getUuid().toString());
+                }
+                List<String> keys = new ArrayList<>(); componentKeys(message, keys);
+                Map<String, Object> data = new java.util.LinkedHashMap<>();
+                data.put("key", translation.getKey()); data.put("text", message.getString()); data.put("pokemon_refs", refs);
+                data.put("translation_keys", keys);
+                var abilities = keys.stream().map(key -> key.substring(key.lastIndexOf('.') + 1))
+                        .filter(name -> com.cobblemon.mod.common.api.abilities.Abilities.get(name) != null).distinct().toList();
+                data.put("abilities_mentioned", abilities);
+                data.put("args", java.util.Arrays.stream(translation.getArgs()).map(argument -> argument instanceof Component component
+                                ? component.getString() : String.valueOf(argument)).toList());
+                BattleTrace.event("message", data);
+                if (translation.getKey().contains("ability") || !abilities.isEmpty())
+                    BattleTrace.event("ability_event", data);
             }
             TrainerBattleTracker.message(translation.getKey(), translation.getArgs());
             field.observe(translation.getKey());
@@ -631,6 +657,68 @@ public final class BattleAdvisor {
                     && member.moves().containsAll(knownMoves(pokemon))).toList();
             return matches.size() == 1 ? matches.getFirst() : null;
         });
+    }
+
+    private static void componentKeys(Component component, List<String> keys) {
+        if (component.getContents() instanceof TranslatableContents translated) {
+            keys.add(translated.getKey());
+            for (Object arg : translated.getArgs()) if (arg instanceof Component nested) componentKeys(nested, keys);
+        }
+        for (var sibling : component.getSiblings()) componentKeys(sibling, keys);
+    }
+
+    private static com.cobblemon.mod.common.client.battle.ClientBattleActor localActor(ClientBattle battle) {
+        var player = Minecraft.getInstance().player;
+        return player == null || battle.getSpectating() ? null : battle.getParticipatingActor(player.getUUID());
+    }
+
+    private static String traceSide(ClientBattlePokemon pokemon) {
+        var battle = CobblemonClient.INSTANCE.getBattle();
+        var local = battle == null ? null : localActor(battle);
+        return local == null ? "unknown" : pokemon.getActor().getSide() == local.getSide() ? "ally" : "enemy";
+    }
+
+    private static Map<String, ?> traceContext(ClientBattle battle) {
+        var local = localActor(battle);
+        var actors = java.util.Arrays.stream(battle.getSides()).flatMap(side -> side.getActors().stream()).toList();
+        var enemies = actors.stream().filter(a -> local != null && a.getSide() != local.getSide()).toList();
+        String allies = local == null ? "" : local.getSide().getActors().stream().map(a -> a.getDisplayName().getString()).collect(java.util.stream.Collectors.joining(" & "));
+        String enemyNames = enemies.stream().map(a -> a.getDisplayName().getString()).collect(java.util.stream.Collectors.joining(" & "));
+        String kind = local == null ? "spectator" : enemies.isEmpty() ? "unknown"
+                : enemies.stream().allMatch(a -> a.getType() == com.cobblemon.mod.common.api.battles.model.actor.ActorType.NPC) ? "trainer"
+                : enemies.stream().allMatch(a -> a.getType() == com.cobblemon.mod.common.api.battles.model.actor.ActorType.WILD) ? "wild" : "pvp_or_mixed";
+        return Map.of("schema_version", 1, "allies", allies, "enemies", enemyNames, "kind", kind,
+                "party", traceParty(), "environment", TrainerBattleTracker.environment(),
+                "actors", actors.stream().map(a -> Map.of("actor", a.getUuid().toString(), "name", a.getDisplayName().getString(),
+                        "type", a.getType().name(), "side", a.getShowdownId())).toList());
+    }
+
+    private static void traceSnapshot() {
+        if (battleId == null) return;
+        List<Map<String, ?>> pokemon = new ArrayList<>();
+        for (var party : traceParty()) {
+            Map<String, Object> member = new java.util.LinkedHashMap<>(party);
+            member.put("side", "ally"); member.put("source", "synced_party"); pokemon.add(member);
+        }
+        Map<String, Object> assumed = new java.util.LinkedHashMap<>();
+        for (var live : activePokemon()) {
+            Map<String, Object> member = new java.util.LinkedHashMap<>();
+            member.put("pokemon", live.getUuid().toString()); member.put("name", live.getDisplayName().getString());
+            member.put("actor", live.getActor().getUuid().toString()); member.put("side", traceSide(live));
+            member.put("apparent_species", live.getSpecies().getName()); member.put("level", live.getLevel());
+            member.put("aspects", live.getState().getCurrentAspects()); member.put("hp_fraction", hpFraction(live));
+            member.put("hp_is_flat", live.isHpFlat()); member.put("synced_max_hp", live.getMaxHp());
+            member.put("status", live.getStatus() == null ? "" : live.getStatus().getShowdownName());
+            member.put("boosts", live.getStatChanges().entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> e.getKey().getShowdownId(), Map.Entry::getValue)));
+            member.put("synced_ability", live.getProperties().getAbility()); member.put("synced_item", live.getProperties().getHeldItem());
+            member.put("synced_moves", live.getProperties().getMoves());
+            member.put("moves_observed", OBSERVED_MOVES.getOrDefault(live.getUuid(), Set.of()));
+            member.put("source", "observed_active"); pokemon.add(member);
+            if (traceSide(live).equals("enemy") && live.getActor().getType() == com.cobblemon.mod.common.api.battles.model.actor.ActorType.NPC)
+                assumed.put(live.getActor().getUuid().toString(), roster(live));
+        }
+        BattleTrace.snapshot(Map.of("pokemon", pokemon, "assumed_rosters", assumed,
+                "field", Map.of("weather", field.weather, "terrain", field.terrain, "trick_room", field.trickRoom)));
     }
 
     private static List<Map<String, ?>> traceParty() {
@@ -1069,8 +1157,8 @@ public final class BattleAdvisor {
         ClientBattlePokemon opponent = CobblemonTeamAdvisor.currentOpponent(tile.getMoveSelection());
         BattleTrace.event("auto_move_submitted", Map.of("pokemon", active == null ? "unknown" : active.getUuid().toString(),
                 "opponent", opponent == null ? "unknown" : opponent.getUuid().toString(), "move", BattleGimmicks.move(tile).getName(),
-                "advice", moveAdvice(tile), "options", tile.getMoveSelection().getMoveTiles().stream().filter(option -> option.getSelectable())
-                        .map(option -> Map.of("move", option.getMoveTemplate().getName(), "pp", option.getMove().getPp(), "advice", moveAdvice(option))).toList()));
+                "advice", moveAdvice(tile), "options", BattleGimmicks.tiles(tile.getMoveSelection()).stream().filter(BattleGimmicks::selectable)
+                        .map(option -> Map.of("move", BattleGimmicks.move(option).getName(), "gimmick", BattleGimmicks.id(option), "pp", option.getMove().getPp(), "advice", moveAdvice(option))).toList()));
     }
 
     record MedicineState(double hp, double maxHp, String status) { }

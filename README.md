@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.17.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.18.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
@@ -166,3 +166,15 @@ These remain bounded estimates: unusual form-changing items, entry ability effec
 ### Immediate Mega activation (v1.17.1)
 
 When AUTO has a legal server-offered Mega move, it activates the native Mega button and clicks the best legal Mega move in the same decision. The move response includes both the attack and Mega Evolution; toggling the button does not consume a separate turn. Mega has priority over ordinary attacks, other battle mechanics, healing items and voluntary switches, even if the untransformed attack scores higher. Forced replacements, rare-encounter pauses, move legality and rejected-mechanic protection still apply. The server controls eligibility and battle order; the client cannot evolve before its first legal action or guarantee survival.
+
+### Complete battle reviews (v1.18.0)
+
+All client-observed battles are recorded, with AUTO on or off: trainers, wild encounters, PvP and spectating. Trainer totals now have two separate tables: `trainer-all-battle-stats.csv` includes completed manual and AUTO-assisted trainer fights; the existing `trainer-battle-stats.csv` keeps its AUTO-only counting rules and history. Both are grouped by mod version and trainer name. No earlier history is invented.
+
+Every battle has a flushed `battle-logs/<timestamp>-<uuid>.jsonl` trace, a matching `.summary.json` report, and one row in `battle-summary.csv`. The index records the battle at start, then updates its outcome and manual/AUTO-assisted label. Summaries refresh at turn boundaries, AUTO submissions, results and battle closure, so interrupted fights retain an unresolved record. JSONL rows carry sequence numbers for linking review evidence.
+
+Team history retains synchronized friendly party stats, items, abilities, moves and PP, encountered enemy species/forms, visible HP/status/boosts, observed moves, ability-related messages and stable translation IDs. Enemy species are explicitly apparent species: Illusion may hide the actual Pokémon. Matched bundled trainer rosters are marked assumed and kept separate from observed data; unrevealed opponents, moves and abilities remain unknown. Ambiguous move users are logged with candidate IDs rather than guessed. Weather/terrain and selected mod versions are included.
+
+Each report includes the explicit result message and review events for faints, missed/failed/prevented actions, immunities, critical hits, invalid choices, repeated AUTO switches without attacking, damage taken on a switch turn, and predicted KOs not observed during that move's health updates. Actual moves are tracked for manual and automatic play, and AUTO decisions include legal alternatives and mechanic IDs. Damage sources and reasons for victory/defeat are observations with chronological context, not claimed proof that a different choice would have won. Disconnections, fleeing or missing result messages never become invented losses.
+
+Reports remain local and use existing client data only. They do not automatically retrain or modify the battle policy. Use them to compare versions, reproduce failures and choose the next scoring fixes. Restart Minecraft to enable the new logging. Older JSONL files remain readable, but missing opponent data cannot be recovered retroactively.

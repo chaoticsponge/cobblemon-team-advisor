@@ -17,6 +17,8 @@ import java.util.UUID;
 final class TrainerBattleStats {
     private static final Gson GSON = new Gson();
     private final Path directory;
+    private final String prefix;
+    private final boolean automatedOnly;
     private final List<Total> totals = new ArrayList<>();
     private UUID battle;
     private String version, trainer, allies, enemies;
@@ -24,9 +26,11 @@ final class TrainerBattleStats {
 
     record Total(String version, String trainer, long battles, long wins) { }
 
-    TrainerBattleStats(Path directory) throws IOException {
-        this.directory = directory;
-        Path state = directory.resolve("trainer-battle-stats.json");
+    TrainerBattleStats(Path directory) throws IOException { this(directory, "trainer-battle-stats", true); }
+
+    TrainerBattleStats(Path directory, String prefix, boolean automatedOnly) throws IOException {
+        this.directory = directory; this.prefix = prefix; this.automatedOnly = automatedOnly;
+        Path state = directory.resolve(prefix + ".json");
         if (Files.exists(state)) {
             try {
                 Total[] saved = GSON.fromJson(Files.readString(state), Total[].class);
@@ -58,7 +62,7 @@ final class TrainerBattleStats {
     void automatedAction() { if (battle != null) automated = true; }
 
     void message(String key, String actorNames) throws IOException {
-        if (battle == null || trainer == null || !automated || finished || Objects.equals(allies, enemies)) return;
+        if (battle == null || trainer == null || automatedOnly && !automated || finished || Objects.equals(allies, enemies)) return;
         Boolean won = outcome(key, actorNames, allies, enemies);
         if (won == null) return;
         // Mark before saving: duplicate result packets must never add another battle after an I/O failure.
@@ -87,14 +91,14 @@ final class TrainerBattleStats {
     }
 
     private void save() throws IOException {
-        write("trainer-battle-stats.json", GSON.toJson(totals));
+        write(prefix + ".json", GSON.toJson(totals));
         StringBuilder csv = new StringBuilder("mod_version,trainer_name,number_of_battles,win_rate\n");
         for (Total total : totals) {
             csv.append(cell(total.version)).append(',').append(cell(total.trainer)).append(',')
                     .append(total.battles).append(',')
                     .append(String.format(Locale.ROOT, "%.2f%%", 100.0 * total.wins / total.battles)).append('\n');
         }
-        write("trainer-battle-stats.csv", csv.toString());
+        write(prefix + ".csv", csv.toString());
     }
 
     private void write(String filename, String content) throws IOException {
