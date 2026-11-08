@@ -1015,6 +1015,8 @@ public final class BattleAdvisor {
         Pokemon active = CobblemonTeamAdvisor.activePokemon(selection);
         if (active == null || opponent == null || candidate == null || selection.getMoveSet().getTrapped()
                 || !canSwitch(selection.getRequest(), candidate, showdown)) return false;
+        if (BattleGimmicks.immediateMega(selection) != null)
+            return switchDecision(active, candidate, opponent, false, "Mega Evolution available; evolve with the move now", Map.of());
         for (var tile : BattleGimmicks.tiles(selection)) {
             if (BattleGimmicks.selectable(tile) && (moveAdvice(tile).firstKo() || moveAdvice(tile).safeKo()))
                 return switchDecision(active, candidate, opponent, false, "stay for a reliable KO", Map.of());

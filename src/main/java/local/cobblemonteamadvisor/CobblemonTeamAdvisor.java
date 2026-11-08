@@ -228,6 +228,8 @@ public final class CobblemonTeamAdvisor {
         }
 
         if (battleGUI.getCurrentActionSelection() instanceof BattleMoveSelection selection) {
+            var mega = BattleGimmicks.immediateMega(selection);
+            if (mega != null) { submitAutoMove(mega, now); return; }
             if (BattleMedicine.tryUse(battleGUI, selection)) { lastAutoActionAt = now; return; }
             if (openAutoSwitchIfNeeded(battleGUI, selection)) {
                 lastAutoActionAt = now;
@@ -235,12 +237,7 @@ public final class CobblemonTeamAdvisor {
             }
 
             BattleMoveSelection.MoveTile tile = bestMoveTile(selection);
-            if (tile != null) {
-                TrainerBattleTracker.automatedAction();
-                BattleAdvisor.traceMove(tile);
-                BattleGimmicks.submit(tile);
-                lastAutoActionAt = now;
-            }
+            if (tile != null) submitAutoMove(tile, now);
         } else if (battleGUI.getCurrentActionSelection() instanceof BattleSwitchPokemonSelection selection) {
             BattleSwitchPokemonSelection.SwitchTile tile = bestSwitchTile(selection, currentOpponent(selection));
             if (!selection.getRequest().getForceSwitch()) {
@@ -266,6 +263,13 @@ public final class CobblemonTeamAdvisor {
                 lastAutoActionAt = now;
             }
         }
+    }
+
+    private static void submitAutoMove(BattleMoveSelection.MoveTile tile, long now) {
+        if (!BattleGimmicks.submit(tile)) return;
+        TrainerBattleTracker.automatedAction();
+        BattleAdvisor.traceMove(tile);
+        lastAutoActionAt = now;
     }
 
     private static boolean clickActionTile(BattleGeneralActionSelection selection, String action) {
@@ -403,6 +407,7 @@ public final class CobblemonTeamAdvisor {
     }
 
     private static boolean shouldAutoSwitch(BattleGUI battleGUI, BattleMoveSelection selection) {
+        if (BattleGimmicks.immediateMega(selection) != null) return false;
         ClientBattlePokemon opponent = currentOpponent(selection);
         Pokemon active = activePokemon(selection);
         if (opponent == null || active == null || selection.getMoveSet().getTrapped()) {

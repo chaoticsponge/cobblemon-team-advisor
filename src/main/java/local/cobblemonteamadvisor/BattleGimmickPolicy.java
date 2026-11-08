@@ -13,6 +13,15 @@ final class BattleGimmickPolicy {
     void rejected() { if (!pending.isEmpty()) rejected.add(pending); pending = ""; }
     void answered() { pending = ""; }
 
+    static boolean immediate(String gimmick) { return "mega".equals(gimmick); }
+
+    static boolean prefer(String candidate, double score, String selected, double selectedScore) {
+        if (!Double.isFinite(score)) return false;
+        if (selected == null) return true;
+        if (immediate(candidate) != immediate(selected)) return immediate(candidate);
+        return score > selectedScore;
+    }
+
     static boolean powered(String gimmick) { return gimmick.equals("zmove") || gimmick.equals("max"); }
 
     static double stab(boolean originalType, boolean teraType, boolean stellar, boolean adaptability) {

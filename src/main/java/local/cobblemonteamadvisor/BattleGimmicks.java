@@ -139,30 +139,49 @@ final class BattleGimmicks {
         }
     }
 
-    static BattleMoveSelection.MoveTile best(BattleMoveSelection selection) {
+    static BattleMoveSelection.MoveTile best(BattleMoveSelection selection) { return best(selection, false); }
+    static BattleMoveSelection.MoveTile immediateMega(BattleMoveSelection selection) { return best(selection, true); }
+
+    private static BattleMoveSelection.MoveTile best(BattleMoveSelection selection, boolean megaOnly) {
         BattleMoveSelection.MoveTile best = null;
         double score = Double.NEGATIVE_INFINITY;
         for (var tile : tiles(selection)) {
             String gimmick = id(tile);
-            if (!selectable(tile)) continue;
+            if (megaOnly && !BattleGimmickPolicy.immediate(gimmick) || !selectable(tile)) continue;
             var advice = BattleAdvisor.moveAdvice(tile);
             double value = advice.score();
-            // Evolving has lasting value even when the immediate hit is tied.
-            if ((gimmick.equals("mega") || gimmick.equals("ultra")) && Double.isFinite(value)) value += 0.01;
-            if (value > score) { score = value; best = tile; }
+            if (gimmick.equals("ultra") && Double.isFinite(value)) value += 0.01;
+            if (BattleGimmickPolicy.prefer(gimmick, value, best == null ? null : id(best), score)) { score = value; best = tile; }
         }
         return best;
     }
 
-    static void submit(BattleMoveSelection.MoveTile tile) {
-        if (!selectable(tile) || !BattleAdvisor.freshSelection(tile.getMoveSelection().getBattleGUI())) return;
+    private static BattleMoveSelection.MoveTile selectMegaMove(BattleMoveSelection.MoveTile chosen) {
+        var selection = chosen.getMoveSelection();
+        for (var button : selection.getGimmickButtons()) {
+            if (button.getTiles().stream().noneMatch(tile -> id(tile).equals("mega"))) continue;
+            if (!button.getToggled()) selection.mousePrimaryClicked(button.getX() + 1, button.getY() + 1);
+            if (!button.getToggled()) return null;
+            return selection.getMoveTiles().stream().filter(tile -> id(tile).equals("mega")
+                    && tile.getMove().getId().equals(chosen.getMove().getId()) && selectable(tile)).findFirst().orElse(null);
+        }
+        return null;
+    }
+
+    static boolean submit(BattleMoveSelection.MoveTile tile) {
+        if (!selectable(tile) || !BattleAdvisor.freshSelection(tile.getMoveSelection().getBattleGUI())) return false;
         String gimmick = id(tile);
+        if (BattleGimmickPolicy.immediate(gimmick)) {
+            tile = selectMegaMove(tile);
+            if (tile == null) return false;
+        }
         if (!gimmick.isEmpty()) {
             submitted = tile.getMoveSelection().getRequest(); policy.submitted(policyKey(tile));
             BattleTrace.event("auto_gimmick_submitted", Map.of("gimmick", gimmick, "move", move(tile).getName(),
                     "baseMove", tile.getMove().getId()));
         }
-        // Native response retains the base move slot, target and exactly one gimmick ID.
-        tile.getMoveSelection().getBattleGUI().selectAction(tile.getMoveSelection().getRequest(), tile.getResponse());
+        // Toggling Mega does not spend a turn. Clicking its move submits both together.
+        tile.onClick();
+        return tile.getMoveSelection().getRequest().getResponse() != null;
     }
 }

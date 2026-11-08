@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.17.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.17.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
@@ -162,3 +162,7 @@ The scorer uses converted Z/Max power (including per-move overrides and fixed-po
 Rejected transformations are suppressed for the rest of that battle, leaving ordinary moves and other mechanics available. During an already active Dynamax, only the rejected base move is suppressed so other Max Moves remain usable. The battle trace records mechanic submissions. No extra chat messages or settings are added.
 
 These remain bounded estimates: unusual form-changing items, entry ability effects, Z-status bonuses, Max weather/terrain/stat effects, custom server moves and the exact remaining Dynamax duration are not fully simulated. Live in-game validation is still required; build checks do not prove server acceptance. The bundled powered-move table is exported from the installed Showdown data with `scripts/export-gimmick-moves.cjs`.
+
+### Immediate Mega activation (v1.17.1)
+
+When AUTO has a legal server-offered Mega move, it activates the native Mega button and clicks the best legal Mega move in the same decision. The move response includes both the attack and Mega Evolution; toggling the button does not consume a separate turn. Mega has priority over ordinary attacks, other battle mechanics, healing items and voluntary switches, even if the untransformed attack scores higher. Forced replacements, rare-encounter pauses, move legality and rejected-mechanic protection still apply. The server controls eligibility and battle order; the client cannot evolve before its first legal action or guarantee survival.

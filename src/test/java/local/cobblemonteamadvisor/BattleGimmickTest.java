@@ -9,6 +9,12 @@ final class BattleGimmickTest {
     static void run() {
         check(BattleGimmickPolicy.type(true, "normal", "pixilate").equals("normal"), "Pixilate must not convert a Normal Z-Move");
         check(BattleGimmickPolicy.type(false, "normal", "pixilate").equals("fairy"), "Ordinary Normal attacks must retain Pixilate conversion");
+        check(BattleGimmickPolicy.prefer("mega", -100, "", 2000), "A legal Mega move must take priority even when the ordinary hit scores higher");
+        check(!BattleGimmickPolicy.prefer("zmove", 3000, "mega", -100), "A stronger Z-Move must not postpone an available Mega");
+        check(BattleGimmickPolicy.prefer("mega", 100, "mega", 50), "Choose the best legal move within the Mega options");
+        check(!BattleGimmickPolicy.prefer("mega", Double.NEGATIVE_INFINITY, "", 50), "A locally restricted Mega move must remain unavailable");
+        check(BattleGimmickPolicy.prefer("zmove", 100, "", 50), "Without Mega, ordinary score-based gimmick selection must still apply");
+        check(!BattleGimmickPolicy.immediate("max"), "Immediate Mega policy must not force other once-per-battle mechanics");
         var policy = new BattleGimmickPolicy();
         policy.submitted("mega"); policy.rejected();
         check(!policy.allowed("mega"), "A rejected transformation must not be retried every tick");
