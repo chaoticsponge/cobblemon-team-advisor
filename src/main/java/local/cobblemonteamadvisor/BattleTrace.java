@@ -145,6 +145,7 @@ final class BattleTrace {
             } finally { Files.deleteIfExists(staged); }
             indexedRow = row;
         }
+        BattlePokemonCsv.update(directory.getParent(), review);
     }
 
     private void fail(Exception error) {

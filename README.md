@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.18.0.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.18.1.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
@@ -178,3 +178,15 @@ Team history retains synchronized friendly party stats, items, abilities, moves 
 Each report includes the explicit result message and review events for faints, missed/failed/prevented actions, immunities, critical hits, invalid choices, repeated AUTO switches without attacking, damage taken on a switch turn, and predicted KOs not observed during that move's health updates. Actual moves are tracked for manual and automatic play, and AUTO decisions include legal alternatives and mechanic IDs. Damage sources and reasons for victory/defeat are observations with chronological context, not claimed proof that a different choice would have won. Disconnections, fleeing or missing result messages never become invented losses.
 
 Reports remain local and use existing client data only. They do not automatically retrain or modify the battle policy. Use them to compare versions, reproduce failures and choose the next scoring fixes. Restart Minecraft to enable the new logging. Older JSONL files remain readable, but missing opponent data cannot be recovered retroactively.
+
+### Owned Pokémon attribution and readable exports (v1.18.1)
+
+Battle messages identify Pokémon with structured owner/name components (for example, “Brock’s Gigalith”), while live Pokémon display names contain only “Gigalith”. The matcher now uses both components to attach moves, ability events, faints and effects to the correct UUID. This handles duplicate species in PvP and localized ownership wording. A genuinely ambiguous owner/name remains unresolved. Generic ability messages also preserve literal ability display names and recognized ability IDs.
+
+Open `battle-pokemon.csv` in the profile directory for one row per encountered Pokémon, including owner, side, species, level, synchronized known moves, separately labeled assumed trainer moves, actual moves used, ability events, item and last observed HP. The JSON review now groups `teams.ally`, `teams.enemy` and `teams.unknown` as well as keeping the original flat `pokemon` list. Win-rate CSV files remain aggregate totals; they are not move logs. An empty `moves_used` means no move was attributed to that Pokémon, including enemies defeated before acting. Unknown moves are never filled from assumptions.
+
+The explicit maintenance command below rebuilds closed v1.18.0 summaries where ownership can be recovered unambiguously from recorded `owned_pokemon` messages. It preserves source versions and original JSONL traces, backs up existing summaries as `*.summary.before-1.18.1.json`, and refreshes the per-Pokémon CSV. It does not change win-rate totals or run automatically during gameplay. Missing or ambiguous information stays unknown.
+
+```sh
+./gradlew reviewBattleLogs -PbattleLogDirectory="/path/to/profile/battle-logs" -PcobblemonJar="/path/to/Cobblemon.jar"
+```

@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'local.cobblemonteamadvisor'
-version = '1.18.0'
+version = '1.18.1'
 
 base {
     archivesName = 'cobblemon-team-advisor'
@@ -39,4 +39,12 @@ tasks.register('battlePolicyTest', JavaExec) {
 
 tasks.named('check') {
     dependsOn battlePolicyTest
+}
+
+// Explicit maintenance tool; normal builds and gameplay never rewrite historical logs.
+tasks.register('reviewBattleLogs', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'local.cobblemonteamadvisor.BattleLogReplay'
+    if (providers.gradleProperty('battleLogDirectory').isPresent()) args providers.gradleProperty('battleLogDirectory').get()
 }

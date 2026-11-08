@@ -29,7 +29,9 @@ final class BattleReport {
         turns = Math.max(turns, turn);
         if (type.equals("battle_start")) context = data.deepCopy();
         if (type.equals("battle_snapshot")) {
-            context.add("assumed_rosters", object(data, "assumed_rosters").deepCopy());
+            var rosters = object(context, "assumed_rosters").deepCopy();
+            object(data, "assumed_rosters").entrySet().forEach(entry -> rosters.add(entry.getKey(), entry.getValue().deepCopy()));
+            context.add("assumed_rosters", rosters);
             context.add("last_field", object(data, "field").deepCopy());
             for (var member : array(data, "pokemon")) {
                 JsonObject snapshot = member.getAsJsonObject();
@@ -167,12 +169,20 @@ final class BattleReport {
     String outcome() { return result == null ? "unresolved" : text(result, "outcome"); }
     String mode() { return automated == 0 ? "manual" : "auto_assisted"; }
     JsonObject summary(boolean closed) {
-        JsonObject report = new JsonObject(); report.addProperty("schema_version", 1);
+        JsonObject report = new JsonObject(); report.addProperty("schema_version", 2);
         report.addProperty("outcome", outcome()); report.addProperty("state", closed ? "closed" : completed() ? "result_received" : "in_progress");
         report.addProperty("control", mode()); report.addProperty("turns_observed", turns);
         report.add("context", context.deepCopy()); report.add("result_evidence", result == null ? null : result.deepCopy());
         report.add("counts", counters.deepCopy());
         JsonArray teams = new JsonArray(); pokemon.values().forEach(p -> teams.add(p.deepCopy())); report.add("pokemon", teams);
+        JsonObject grouped = new JsonObject();
+        for (String side : List.of("ally", "enemy", "unknown")) {
+            JsonArray members = new JsonArray();
+            pokemon.values().stream().filter(p -> text(p, "side").equals(side) || side.equals("unknown") && text(p, "side").isEmpty())
+                    .forEach(p -> members.add(p.deepCopy()));
+            grouped.add(side, members);
+        }
+        report.add("teams", grouped);
         JsonArray events = new JsonArray(); notable.forEach(e -> events.add(e.deepCopy())); report.add("review_events", events);
         JsonArray findings = new JsonArray();
         findings.add(completed() ? "Confirmed " + outcome() + " from the server's battle result message."

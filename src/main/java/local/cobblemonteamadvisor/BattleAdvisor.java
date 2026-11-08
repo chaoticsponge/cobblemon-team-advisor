@@ -206,8 +206,7 @@ public final class BattleAdvisor {
         boolean used = translation.getKey().equals("cobblemon.battle.used_move") || translation.getKey().equals("cobblemon.battle.used_move_on");
         boolean prevented = translation.getKey().startsWith("cobblemon.battle.cant.");
         if ((used || prevented) && args.length > 0 && args[0] instanceof Component source) {
-            List<ClientBattlePokemon> matches = activePokemon().stream()
-                    .filter(pokemon -> pokemon.getDisplayName().getString().equals(source.getString())).toList();
+            List<ClientBattlePokemon> matches = matchingPokemon(source);
             if (used && args.length > 1 && args[1] instanceof Component move) {
                 String name = translatedMoveId(move);
                 if (name != null) {
@@ -240,10 +239,25 @@ public final class BattleAdvisor {
         }
     }
 
+    private static List<ClientBattlePokemon> matchingPokemon(Component component) {
+        String owner = null, name = null;
+        if (component.getContents() instanceof TranslatableContents translated
+                && translated.getKey().equals("cobblemon.battle.owned_pokemon") && translated.getArgs().length == 2) {
+            owner = argumentText(translated.getArgs()[0]); name = argumentText(translated.getArgs()[1]);
+        }
+        var active = activePokemon();
+        var candidates = active.stream().map(p -> new BattleIdentity.Candidate(p.getUuid().toString(),
+                p.getActor().getUuid().toString(), p.getActor().getDisplayName().getString(), p.getDisplayName().getString())).toList();
+        var matched = BattleIdentity.match(component.getString(), owner, name, candidates).stream()
+                .map(BattleIdentity.Candidate::pokemon).collect(java.util.stream.Collectors.toSet());
+        return active.stream().filter(p -> matched.contains(p.getUuid().toString())).toList();
+    }
+
+    private static String argumentText(Object value) { return value instanceof Component component ? component.getString() : String.valueOf(value); }
+
     private static ClientBattlePokemon namedPokemon(Object argument) {
         if (!(argument instanceof Component component)) return null;
-        List<ClientBattlePokemon> matches = activePokemon().stream()
-                .filter(pokemon -> pokemon.getDisplayName().getString().equals(component.getString())).toList();
+        var matches = matchingPokemon(component);
         return matches.size() == 1 ? matches.getFirst() : null;
     }
 
@@ -416,7 +430,13 @@ public final class BattleAdvisor {
                 data.put("key", translation.getKey()); data.put("text", message.getString()); data.put("pokemon_refs", refs);
                 data.put("translation_keys", keys);
                 var abilities = keys.stream().map(key -> key.substring(key.lastIndexOf('.') + 1))
-                        .filter(name -> com.cobblemon.mod.common.api.abilities.Abilities.get(name) != null).distinct().toList();
+                        .filter(name -> com.cobblemon.mod.common.api.abilities.Abilities.get(name) != null)
+                        .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+                if (translation.getKey().equals("cobblemon.battle.ability.generic") && translation.getArgs().length > 1) {
+                    String display = argumentText(translation.getArgs()[1]); data.put("ability_display_name", display);
+                    var ability = com.cobblemon.mod.common.api.abilities.Abilities.get(id(display));
+                    if (ability != null) abilities.add(ability.getName());
+                }
                 data.put("abilities_mentioned", abilities);
                 data.put("args", java.util.Arrays.stream(translation.getArgs()).map(argument -> argument instanceof Component component
                                 ? component.getString() : String.valueOf(argument)).toList());
@@ -698,13 +718,16 @@ public final class BattleAdvisor {
         List<Map<String, ?>> pokemon = new ArrayList<>();
         for (var party : traceParty()) {
             Map<String, Object> member = new java.util.LinkedHashMap<>(party);
-            member.put("side", "ally"); member.put("source", "synced_party"); pokemon.add(member);
+            member.put("side", "ally"); member.put("source", "synced_party");
+            var local = localActor(CobblemonClient.INSTANCE.getBattle());
+            if (local != null) { member.put("owner", local.getDisplayName().getString()); member.put("actor", local.getUuid().toString()); }
+            pokemon.add(member);
         }
         Map<String, Object> assumed = new java.util.LinkedHashMap<>();
         for (var live : activePokemon()) {
             Map<String, Object> member = new java.util.LinkedHashMap<>();
             member.put("pokemon", live.getUuid().toString()); member.put("name", live.getDisplayName().getString());
-            member.put("actor", live.getActor().getUuid().toString()); member.put("side", traceSide(live));
+            member.put("actor", live.getActor().getUuid().toString()); member.put("owner", live.getActor().getDisplayName().getString()); member.put("side", traceSide(live));
             member.put("apparent_species", live.getSpecies().getName()); member.put("level", live.getLevel());
             member.put("aspects", live.getState().getCurrentAspects()); member.put("hp_fraction", hpFraction(live));
             member.put("hp_is_flat", live.isHpFlat()); member.put("synced_max_hp", live.getMaxHp());
