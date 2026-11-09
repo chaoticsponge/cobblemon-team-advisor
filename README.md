@@ -49,7 +49,7 @@ Use Java 21 and Gradle 8.8 or newer, then run:
 ./gradlew build
 ```
 
-The built mod is at `build/libs/cobblemon-team-advisor-1.18.1.jar`. Copy it into the profile's `mods` directory and restart the game.
+The built mod is at `build/libs/cobblemon-team-advisor-1.19.0.jar`. Copy it into the profile's `mods` directory and restart the game.
 
 The default compile dependency is the profile's Cobblemon 1.7.3 jar. To check another locally installed version, pass `-PcobblemonJar=/path/to/Cobblemon.jar` to Gradle.
 
@@ -190,3 +190,13 @@ The explicit maintenance command below rebuilds closed v1.18.0 summaries where o
 ```sh
 ./gradlew reviewBattleLogs -PbattleLogDirectory="/path/to/profile/battle-logs" -PcobblemonJar="/path/to/Cobblemon.jar"
 ```
+
+### Survival-aware tactics (v1.19.0)
+
+Reviewing the Clair and Dragon Tamer Ramiro logs exposed status/attack scoring on different risk scales: attacks were penalized for a forecast faint while unsafe setup could still rank higher. Status and attack plans now share that survival penalty. Stat setup must provide a useful boost, survive the modeled continuation and execute a damaging follow-up; otherwise it becomes a last-resort legal fallback. Lower current HP reduces setup preference further. Protect and healing are exempt from the setup HP penalty and remain available when their modeled survival value warrants them. Reliable KO ranking is retained.
+
+The planner now distinguishes performing the first setup from actually acting on the next turn. Attack, Special Attack, Defense and Special Defense changes are modeled separately, including self-inflicted drops: Iron Defense no longer falsely mitigates Thunderbolt, and Nasty Plot no longer boosts physical attacks. These remain bounded estimates rather than a complete simulator of every move interaction.
+
+Explicit recharge messages schedule one known non-attacking turn. Advice and the two-turn planner can use that window to heal or attack, then resume modeling enemy attacks on the following turn. A missed or blocked beam does not invent a free recharge. Recharge state expires and resets on switching. Consecutive Destiny Bond attempts are suppressed, addressing the repeated failed attempt seen in the Ramiro fight.
+
+Regressions cover low-HP setup followed by a faint, surviving setup but dying before the follow-up, useful speed/attack setup, low-HP Protect with residual damage, physical/special boosts and defense drops, recharge healing opportunities and recharge expiration. These changes target observed wasted turns; higher live win rates require new battles and are not established by replaying the old outcomes.

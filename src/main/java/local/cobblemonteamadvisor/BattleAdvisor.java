@@ -353,6 +353,8 @@ public final class BattleAdvisor {
         if (args.length == 0) return;
         ClientBattlePokemon pokemon = namedPokemon(args[0]);
         if (pokemon == null) return;
+        if (key.equals("cobblemon.battle.recharge")) moveState.recharge(pokemon.getUuid());
+        if (key.equals("cobblemon.battle.cant.recharge")) moveState.consumedRecharge(pokemon.getUuid());
         String[] parts = key.split("\\.");
         if (parts.length != 4) return;
         String phase = parts[2], effect = parts[3];
@@ -982,15 +984,19 @@ public final class BattleAdvisor {
         double heal = healing(user, move);
         if (name.equals("rest") && !user.status.equals("slp")) heal = user.maxHp;
         // Wish is delayed beyond the action itself; omit immediate healing rather than promise a false rescue.
-        double attack = 1, defence = 1, speed = 1;
-        if (effect.has("boosts") && move.getTarget() == MoveTarget.self) {
-            for (var boost : effect.getAsJsonObject("boosts").entrySet()) {
+        double attack = 1, defence = 1, specialAttack = 1, specialDefence = 1, speed = 1;
+        var boosts = setupBoosts(move);
+        if (boosts != null) {
+            for (var boost : boosts.entrySet()) {
                 Stats stat = statId(boost.getKey());
-                if (stat == null || boost.getValue().getAsInt() <= 0) continue;
-                double ratio = BattleMatchupPolicy.stageMultiplier(user.stage(stat) + boost.getValue().getAsInt())
+                int change = BattleMatchupPolicy.boostChange(boost.getValue().getAsInt(), user.ability);
+                if (stat == null || change == 0) continue;
+                double ratio = BattleMatchupPolicy.stageMultiplier(user.stage(stat) + change)
                         / BattleMatchupPolicy.stageMultiplier(user.stage(stat));
-                if (stat == Stats.ATTACK && hasAttackCategory(user, stat) || stat == Stats.SPECIAL_ATTACK && hasAttackCategory(user, stat)) attack = Math.max(attack, ratio);
-                if (stat == Stats.DEFENCE || stat == Stats.SPECIAL_DEFENCE) defence = Math.max(defence, ratio);
+                if (stat == Stats.ATTACK && hasAttackCategory(user, stat)) attack = ratio;
+                if (stat == Stats.SPECIAL_ATTACK && hasAttackCategory(user, stat)) specialAttack = ratio;
+                if (stat == Stats.DEFENCE) defence = ratio;
+                if (stat == Stats.SPECIAL_DEFENCE) specialDefence = ratio;
                 if (stat == Stats.SPEED) speed = ratio;
             }
         }
@@ -1005,10 +1011,10 @@ public final class BattleAdvisor {
         if (effect.has("selfdestruct")) recoil = user.hp / Math.max(1, target.hp);
         BattlePlanner.Effect modeled = new BattlePlanner.Effect(heal, fraction(effect, "drain"), recoil, attack, defence, speed,
                 unknownRaidHp(target) ? 0 : extraResidual, status, Set.of("protect", "detect", "kingsshield", "spikyshield", "banefulbunker", "silktrap", "burningbulwark").contains(name),
-                name.equals("substitute"), name.equals("rest") ? "slp" : "");
+                name.equals("substitute"), name.equals("rest") ? "slp" : "", specialAttack, specialDefence);
         return new BattlePlanner.Action(name, unknownRaidHp(target) ? 0 : damage(user, target, move, type, 0.925D), moveAccuracy(user, target, move),
                 priority(user, move), pp, modeled, Set.of("firstimpression", "fakeout", "matblock").contains(name),
-                Set.of("gigatonhammer", "bloodmoon").contains(name), move.getDamageCategory() == DamageCategories.INSTANCE.getPHYSICAL(),
+                Set.of("gigatonhammer", "bloodmoon", "destinybond").contains(name), move.getDamageCategory() == DamageCategories.INSTANCE.getPHYSICAL(),
                 user.ability.equals("infiltrator") || effect.has("sound"), effect.has("recharge"), charging(user, move), effect.has("breaksProtect"));
     }
 
@@ -1041,19 +1047,17 @@ public final class BattleAdvisor {
         if (learned != null) mySpeed = learned != field.trickRoom ? theirSpeed * 1.01 : theirSpeed * 0.99;
         boolean enemySubstitute = moveState.hasEffect(foe.uuid(), "substitute");
         List<BattlePlanner.Action> replies = actions(foe, own, null);
-        if (switching) {
-            actions = boundedActions(actions, own, foe, 0.85);
-            replies = boundedActions(replies, foe, own, 1);
-        }
+        if (switching) actions = boundedActions(actions, own, foe, 0.85);
+        if (switching || first.damage() == 0) replies = boundedActions(replies, foe, own, 1);
         BattlePlanner.Combatant mine = new BattlePlanner.Combatant(own.hp - (switching ? entryDamage(own) : 0), own.maxHp, mySpeed,
                 residual(own), own.entering ? 0 : moveState.hasEffect(own.uuid(), "substitute") ? own.maxHp / 4 : 0, own.status, actions, own.entering ? "" : moveState.lastMove(own.uuid()),
-                own.entering ? "" : moveState.effectMove(own.uuid(), "charging"));
+                own.entering ? "" : moveState.effectMove(own.uuid(), "charging"), !own.entering && moveState.recharging(own.uuid()));
         BattlePlanner.Combatant enemy = new BattlePlanner.Combatant(foe.hp, foe.maxHp, theirSpeed, unknownRaidHp(foe) ? 0 : residual(foe),
                 enemySubstitute ? foe.maxHp / 4 : 0, foe.status, replies, moveState.lastMove(foe.uuid()),
-                moveState.effectMove(foe.uuid(), "charging"));
+                moveState.effectMove(foe.uuid(), "charging"), moveState.recharging(foe.uuid()));
         BattlePlanner.Plan result = BattlePlanner.evaluate(mine, enemy, first, switching, field.trickRoom);
         return new BattlePlanner.Plan(result.value() - reservePenalty(own, foe, result.hpRemaining()),
-                result.next(), result.survives(), result.hpRemaining(), result.acts());
+                result.next(), result.survives(), result.hpRemaining(), result.acts(), result.followsUp());
     }
 
     private static List<BattlePlanner.Action> boundedActions(List<BattlePlanner.Action> actions, Fighter user, Fighter target, double roll) {
@@ -1109,7 +1113,7 @@ public final class BattleAdvisor {
             MoveTemplate move = Moves.getByName(action.id());
             if (move != null && damaging(move) && damage(own, foe, move, move.getEffectiveElementalType(own.own), 0.85) > 0) return true;
             return forecast.survives() && (action.effect().heal() > 0 && own.hp < own.maxHp
-                    || action.effect().attack() > 1 || action.effect().defence() > 1 || !action.effect().status().isEmpty());
+                    || action.effect().attack() > 1 || action.effect().defence() > 1 || action.effect().specialAttack() > 1 || action.effect().specialDefence() > 1 || !action.effect().status().isEmpty());
         }
         return false;
     }
@@ -1250,18 +1254,24 @@ public final class BattleAdvisor {
         double before = 0;
         boolean first = true;
         for (MoveTemplate reply : replies) {
+            if (moveState.recharging(foe.uuid())) continue;
             boolean precedes = actsFirst(own, foe, move, reply);
             if (!precedes) first = false;
             double hit = damage(foe, own, reply, reply.getElementalType(), 1.0D);
             incoming = Math.max(incoming, hit);
             if (!precedes) before = Math.max(before, hit);
         }
-        if (replies.isEmpty()) { incoming = own.maxHp * 0.25D; before = incoming; first = false; }
+        if (replies.isEmpty() && !moveState.recharging(foe.uuid())) { incoming = own.maxHp * 0.25D; before = incoming; first = false; }
         BattlePlanner.Plan forecast = movePlan(tile, own, foe, move, type);
         if (!damaging(move)) {
             MoveAdvice utility = utility(own, foe, move, accuracy, incoming, before);
-            return new MoveAdvice(forecast.value() / 20 + utility.score() * 0.15, false, false,
-                    utility.reason() + (forecast.next().isEmpty() ? "" : "; then " + forecast.next()));
+            boolean setup = setupBoosts(move) != null;
+            MoveTemplate next = Moves.getByName(forecast.next());
+            boolean usefulFollowup = setupGain(own, move) > 0 && forecast.followsUp() && forecast.survives()
+                    && next != null && damaging(next) && damage(own, foe, next, next.getEffectiveElementalType(own.own), 0.85) > 0;
+            double value = BattleMatchupPolicy.utilityValue(forecast.value(), utility.score(), forecast.survives(), setup, usefulFollowup, own.hp / own.maxHp);
+            String reason = setup ? usefulFollowup ? "setup with a surviving damaging follow-up; HP risk applied" : "unsafe or ineffective setup: no useful surviving attack" : utility.reason();
+            return new MoveAdvice(value, false, false, reason + (forecast.next().isEmpty() ? "" : "; then " + forecast.next()));
         }
         double damage = damage(own, foe, move, type, 0.925D);
         double minimum = damage(own, foe, move, type, 0.85D);
@@ -1305,7 +1315,7 @@ public final class BattleAdvisor {
         if (needsCharge || effect.has("recharge")) damagePerTurn /= 2;
         double value = BattleMatchupPolicy.moveValue(forecast.value(), score, damagePerTurn / Math.max(1, foe.maxHp),
                 accuracy * actionChance, chance * actionChance, canFinish, unknownHp);
-        if (chance == 0 && !forecast.survives()) value -= 100;
+        value += BattleMatchupPolicy.survivalPenalty(forecast.survives());
         return new MoveAdvice(value, ko, firstKo, reason, accuracy, ko && accuracy >= 1 && canFinish && actionChance >= 1);
     }
 
@@ -1345,19 +1355,9 @@ public final class BattleAdvisor {
             if (own.hp <= incoming + residual) value -= 2;
             return new MoveAdvice(value * accuracy, false, false, "apply " + status + " (" + Math.round(accuracy * 100) + "% accurate)");
         }
-        JsonObject boosts = effect.has("boosts") && move.getTarget() == MoveTarget.self
-                ? effect.getAsJsonObject("boosts") : effect.has("selfBoosts") ? effect.getAsJsonObject("selfBoosts") : null;
-        if (boosts != null) {
-            double gain = 0;
-            for (var boost : boosts.entrySet()) {
-                Stats stat = statId(boost.getKey());
-                if (stat == null || boost.getValue().getAsInt() <= 0 || own.stage(stat) >= 6) continue;
-                if ((stat == Stats.ATTACK || stat == Stats.SPECIAL_ATTACK) && !hasAttackCategory(own, stat)) continue;
-                gain += Math.min(boost.getValue().getAsInt(), 6 - own.stage(stat)) * 0.3D;
-            }
-            boolean safe = own.hp > incoming * 2 + residual * 2;
-            return new MoveAdvice(safe ? Math.min(1.0D, gain) : -2, false, false,
-                    safe ? "setup while surviving two hits" : "setup is unsafe");
+        if (setupBoosts(move) != null) {
+            double gain = setupGain(own, move);
+            return new MoveAdvice(Math.min(1.0D, gain), false, false, gain > 0 ? "setup gain; survival required" : "setup cannot improve usable stats");
         }
         if (effect.has("sideCondition")) {
             String hazard = effect.get("sideCondition").getAsString();
@@ -1376,6 +1376,26 @@ public final class BattleAdvisor {
             return new MoveAdvice(1.0D, false, false, "clear your team's entry hazards");
         }
         return new MoveAdvice(0, false, false, "utility effect not estimated");
+    }
+
+    private static JsonObject setupBoosts(MoveTemplate move) {
+        JsonObject effect = effects(move);
+        return effect.has("boosts") && move.getTarget() == MoveTarget.self ? effect.getAsJsonObject("boosts")
+                : effect.has("selfBoosts") ? effect.getAsJsonObject("selfBoosts") : null;
+    }
+
+    private static double setupGain(Fighter own, MoveTemplate move) {
+        var boosts = setupBoosts(move);
+        if (boosts == null) return 0;
+        double gain = 0;
+        for (var boost : boosts.entrySet()) {
+            Stats stat = statId(boost.getKey());
+            int change = BattleMatchupPolicy.boostChange(boost.getValue().getAsInt(), own.ability);
+            if (stat == null || change <= 0 || own.stage(stat) >= 6) continue;
+            if ((stat == Stats.ATTACK || stat == Stats.SPECIAL_ATTACK) && !hasAttackCategory(own, stat)) continue;
+            gain += Math.min(change, 6 - own.stage(stat)) * 0.3D;
+        }
+        return gain;
     }
 
     private static boolean hasAttackCategory(Fighter own, Stats stat) {

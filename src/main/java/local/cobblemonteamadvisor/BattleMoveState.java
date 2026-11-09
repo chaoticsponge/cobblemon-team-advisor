@@ -10,7 +10,7 @@ import java.util.UUID;
 
 final class BattleMoveState {
     private static final Set<String> OPENERS = Set.of("firstimpression", "fakeout", "matblock");
-    private static final Set<String> COOLDOWNS = Set.of("gigatonhammer", "bloodmoon");
+    private static final Set<String> COOLDOWNS = Set.of("gigatonhammer", "bloodmoon", "destinybond");
     private static final class Entry {
         int firstTurn = -1;
         boolean acted;
@@ -18,7 +18,7 @@ final class BattleMoveState {
         final Set<String> used = new HashSet<>();
         final Map<String, String> effects = new HashMap<>();
         String choiceMove = "";
-        int protectTurn = -1;
+        int protectTurn = -1, rechargeTurn = -1;
     }
 
     private final Map<UUID, Entry> entries = new HashMap<>();
@@ -53,6 +53,10 @@ final class BattleMoveState {
     void attempted(UUID pokemon) {
         entry(pokemon).acted = true;
     }
+
+    void recharge(UUID pokemon) { entry(pokemon).rechargeTurn = turn + 1; }
+    void consumedRecharge(UUID pokemon) { entry(pokemon).rechargeTurn = -1; }
+    boolean recharging(UUID pokemon) { return entry(pokemon).rechargeTurn == turn; }
 
     int turn() { return turn; }
     String lastMove(UUID pokemon) { return entry(pokemon).lastMove; }

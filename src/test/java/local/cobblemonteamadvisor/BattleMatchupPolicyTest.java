@@ -168,6 +168,7 @@ public final class BattleMatchupPolicyTest {
         require(new BattleMoveState().unavailable(sirfetchd, "firstimpression", moves, true) == null,
                 "A new battle must not retain restrictions");
         BattleStrategyTest.run();
+        BattleSurvivalTest.run();
         BattleSwitchPolicyTest.run();
         BattleDamageTest.run();
         PokedexGuideTest.run();

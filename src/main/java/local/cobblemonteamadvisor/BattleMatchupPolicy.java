@@ -122,6 +122,19 @@ final class BattleMatchupPolicy {
         return score;
     }
 
+    static int boostChange(int amount, String ability) {
+        return amount * (ability.equals("contrary") ? -1 : ability.equals("simple") ? 2 : 1);
+    }
+
+    static double survivalPenalty(boolean survives) { return survives ? 0 : -100; }
+
+    static double utilityValue(double forecast, double heuristic, boolean survives, boolean setup, boolean usefulFollowup, double hpFraction) {
+        // A futile setup remains a last-resort legal fallback, below any useful attack.
+        if (setup && !usefulFollowup) return -1000;
+        return Math.max(-6, Math.min(6, forecast / 20)) + heuristic * 0.15 + survivalPenalty(survives)
+                - (setup ? 6 * (1 - Math.max(0, Math.min(1, hpFraction))) : 0);
+    }
+
     static double healingScore(double hp, double maxHp, double healing, double incoming, double residual) {
         healing = Math.max(0, Math.min(healing, maxHp - hp));
         if (healing == 0) return 0;

@@ -5,7 +5,11 @@ import java.util.List;
 /** A bounded two-turn search over known legal actions, using conservative opponent replies. */
 final class BattlePlanner {
     record Effect(double heal, double drain, double recoil, double attack, double defence, double speed,
-                  double residual, String status, boolean protect, boolean substitute, String selfStatus) {
+                  double residual, String status, boolean protect, boolean substitute, String selfStatus, double specialAttack, double specialDefence) {
+        Effect(double heal, double drain, double recoil, double attack, double defence, double speed,
+               double residual, String status, boolean protect, boolean substitute, String selfStatus) {
+            this(heal, drain, recoil, attack, defence, speed, residual, status, protect, substitute, selfStatus, attack, defence);
+        }
         Effect(double heal, double drain, double recoil, double attack, double defence, double speed,
                double residual, String status, boolean protect, boolean substitute) {
             this(heal, drain, recoil, attack, defence, speed, residual, status, protect, substitute, "");
@@ -32,26 +36,35 @@ final class BattlePlanner {
         }
     }
     record Combatant(double hp, double maxHp, double speed, double residual, double substitute,
-                     String status, List<Action> actions, String lastMove, String chargedMove) {
+                     String status, List<Action> actions, String lastMove, String chargedMove, boolean recharging) {
+        Combatant(double hp, double maxHp, double speed, double residual, double substitute, String status,
+                  List<Action> actions, String lastMove, String chargedMove) {
+            this(hp, maxHp, speed, residual, substitute, status, actions, lastMove, chargedMove, false);
+        }
         Combatant(double hp, double maxHp, double speed, double residual, double substitute, String status, List<Action> actions) {
             this(hp, maxHp, speed, residual, substitute, status, actions, "", "");
         }
     }
-    record Plan(double value, String next, boolean survives, double hpRemaining, boolean acts) { }
+    record Plan(double value, String next, boolean survives, double hpRemaining, boolean acts, boolean followsUp) {
+        Plan(double value, String next, boolean survives, double hpRemaining, boolean acts) {
+            this(value, next, survives, hpRemaining, acts, false);
+        }
+    }
     private static final Action PASS = Action.attack("pass", 0, 0);
 
     private static final class State {
-        double hp, substitute, attack = 1, defence = 1, speed, residual;
+        double hp, substitute, attack = 1, defence = 1, specialAttack = 1, specialDefence = 1, speed, residual;
         String status, last = "", charged = "";
-        boolean protectedTurn, acted;
+        boolean protectedTurn, acted, actedThisTurn, recharging;
         boolean newlyBurned;
         State(Combatant fighter) {
             hp = fighter.hp; substitute = fighter.substitute; speed = fighter.speed;
-            residual = fighter.residual; status = fighter.status; last = fighter.lastMove; charged = fighter.chargedMove;
+            residual = fighter.residual; status = fighter.status; last = fighter.lastMove; charged = fighter.chargedMove; recharging = fighter.recharging;
         }
         State(State source) {
             hp = source.hp; substitute = source.substitute; attack = source.attack; defence = source.defence;
-            speed = source.speed; residual = source.residual; status = source.status; last = source.last; charged = source.charged; newlyBurned = source.newlyBurned; acted = source.acted;
+            speed = source.speed; residual = source.residual; specialAttack = source.specialAttack; specialDefence = source.specialDefence; recharging = source.recharging;
+            status = source.status; last = source.last; charged = source.charged; newlyBurned = source.newlyBurned; acted = source.acted;
         }
     }
 
@@ -62,19 +75,19 @@ final class BattlePlanner {
         String followup = "";
         boolean survives = true;
         double hpRemaining = own.hp;
-        boolean acts = true;
+        boolean acts = true, followsUp = true;
         for (Action reply : actions(foe.actions)) {
             State mine = new State(initial), enemy = new State(opponent);
             turn(mine, enemy, own, foe, switching ? PASS : first, reply, trickRoom);
             Plan continuation = terminal(mine, enemy) ? new Plan(value(mine, enemy, own, foe), "", mine.hp > 0, mine.hp, mine.acted)
-                    : bestSecond(mine, enemy, own, foe, first, reply, switching, trickRoom);
-            acts &= continuation.acts;
+                    : bestSecond(mine, enemy, own, foe, own.recharging ? PASS : first, foe.recharging ? PASS : reply, switching, trickRoom);
+            acts &= continuation.acts; followsUp &= continuation.followsUp;
             survives &= continuation.survives;
             if (continuation.value < worst) {
                 worst = continuation.value; followup = continuation.next; hpRemaining = continuation.hpRemaining;
             }
         }
-        return new Plan(worst, followup, survives, hpRemaining, acts);
+        return new Plan(worst, followup, survives, hpRemaining, acts, followsUp);
     }
 
     private static Plan bestSecond(State mine, State enemy, Combatant own, Combatant foe,
@@ -83,18 +96,18 @@ final class BattlePlanner {
         String next = "";
         boolean survives = false;
         double bestHp = mine.hp;
-        boolean bestActs = false;
+        boolean bestActs = false, bestFollows = false;
         for (Action action : actions(own.actions)) {
             if (!secondAllowed(action, previous, switched)) continue;
             double worst = Double.POSITIVE_INFINITY;
             boolean alive = true;
             double worstHp = mine.hp;
-            boolean acts = true;
+            boolean acts = true, follows = true;
             for (Action answer : actions(foe.actions)) {
                 if (!secondAllowed(answer, reply, false)) continue;
                 State a = new State(mine), b = new State(enemy);
                 turn(a, b, own, foe, action, answer, trickRoom);
-                acts &= a.acted;
+                acts &= a.acted; follows &= a.actedThisTurn;
                 alive &= a.hp > 0;
                 double score = value(a, b, own, foe);
                 if (score < worst) { worst = score; worstHp = a.hp; }
@@ -102,12 +115,14 @@ final class BattlePlanner {
             if (worst == Double.POSITIVE_INFINITY) {
                 State a = new State(mine), b = new State(enemy);
                 turn(a, b, own, foe, action, PASS, trickRoom);
-                acts = a.acted;
+                acts = a.acted; follows = a.actedThisTurn;
                 worst = value(a, b, own, foe); alive = a.hp > 0; worstHp = a.hp;
             }
-            if (worst > best || worst == best && acts && !bestActs) { best = worst; next = action.id; survives = alive; bestHp = worstHp; bestActs = acts; }
+            if (worst > best || worst == best && follows && !bestFollows) {
+                best = worst; next = action.id; survives = alive; bestHp = worstHp; bestActs = acts; bestFollows = follows;
+            }
         }
-        if (best != -Double.MAX_VALUE) return new Plan(best, next, survives, bestHp, bestActs);
+        if (best != -Double.MAX_VALUE) return new Plan(best, bestFollows ? next : "", survives, bestHp, bestActs, bestFollows);
         // An exhausted or opener-only moveset must still suffer the opponent's next action.
         double worst = Double.POSITIVE_INFINITY;
         double remaining = mine.hp;
@@ -120,7 +135,6 @@ final class BattlePlanner {
     }
 
     private static boolean secondAllowed(Action move, Action previous, boolean switched) {
-        if (!switched && previous.recharge) return false;
         if (!switched && previous.charging) return move.id.equals(previous.id);
         return (switched || !move.opener) && (!move.id.equals(previous.id)
                 || !move.cooldown && move.pp > 1 && !move.effect.substitute);
@@ -130,6 +144,7 @@ final class BattlePlanner {
     private static boolean terminal(State a, State b) { return a.hp <= 0 || b.hp <= 0; }
 
     private static void turn(State a, State b, Combatant own, Combatant foe, Action move, Action reply, boolean trickRoom) {
+        a.actedThisTurn = false; b.actedThisTurn = false;
         boolean first = BattleMatchupPolicy.actsFirst(move.priority, a.speed, reply.priority, b.speed, trickRoom);
         if (first) {
             act(a, b, own, foe, move);
@@ -144,10 +159,12 @@ final class BattlePlanner {
     }
 
     private static void act(State user, State target, Combatant own, Combatant foe, Action action) {
-        if (user.hp <= 0 || target.hp <= 0 || !action.id.startsWith("item:") && (user.status.equals("slp") || user.status.equals("frz"))) return;
+        if (user.hp <= 0 || target.hp <= 0) return;
+        if (user.recharging) { user.recharging = false; return; }
+        if (!action.id.startsWith("item:") && (user.status.equals("slp") || user.status.equals("frz"))) return;
         if (action.charging && !user.charged.equals(action.id)) { user.charged = action.id; user.last = action.id; return; }
         user.charged = "";
-        if (!action.id.equals("pass") && !action.id.equals("switch") && action.accuracy > 0) user.acted = true;
+        if (!action.id.equals("pass") && !action.id.equals("switch") && action.accuracy > 0) { user.acted = true; user.actedThisTurn = true; }
         double chance = action.accuracy * (user.status.equals("par") ? 0.75 : 1);
         Effect effect = action.effect;
         user.hp = Math.min(own.maxHp, user.hp + effect.heal * chance);
@@ -160,7 +177,7 @@ final class BattlePlanner {
         }
         if (action.breaksProtect) target.protectedTurn = false;
         boolean hadSubstitute = target.substitute > 0 && !action.bypassSubstitute;
-        double onHit = target.protectedTurn ? 0 : action.damage * user.attack / target.defence
+        double onHit = target.protectedTurn ? 0 : action.damage * (action.physical ? user.attack : user.specialAttack) / (action.physical ? target.defence : target.specialDefence)
                 * (user.newlyBurned && action.physical ? 0.5 : 1);
         // Excess damage only happens on a hit; a 50%-accurate overkill must not become a certain KO.
         double damage = Math.min(hadSubstitute ? target.substitute : target.hp, onHit) * chance;
@@ -179,7 +196,9 @@ final class BattlePlanner {
             if (effect.status.equals("par")) target.speed *= 0.5;
         }
         if (!effect.selfStatus.isEmpty()) user.status = effect.selfStatus;
-        user.attack *= effect.attack; user.defence *= effect.defence; user.speed *= effect.speed;
+        user.attack *= effect.attack; user.defence *= effect.defence;
+        user.specialAttack *= effect.specialAttack; user.specialDefence *= effect.specialDefence; user.speed *= effect.speed;
+        if (action.recharge && damage > 0) user.recharging = true;
         user.last = action.id;
     }
 
